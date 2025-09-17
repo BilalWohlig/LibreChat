@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '~/components/ui/Button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '~/components/ui/Dialog';
 import DataTable from '~/components/ui/DataTable';
@@ -59,6 +60,7 @@ function toRow(log: RawLog, cache: UserCache): RowLog {
 }
 
 export default function AdminLogs() {
+  const navigate = useNavigate();
   const [userCache] = useState<UserCache>({});
   const [selected, setSelected] = useState<RowLog | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -245,7 +247,7 @@ export default function AdminLogs() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => (window.location.href = '/c/new')}
+            onClick={() => navigate('/c/new')}
             className="rounded-full"
           >
             <ArrowLeft className="h-5 w-5" />
