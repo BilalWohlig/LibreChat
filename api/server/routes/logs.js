@@ -103,11 +103,18 @@ router.get('/queries', async (req, res) => {
     return;
   }
 
-  // Heartbeats to keep connection alive
+  // Heartbeats to keep connection alive (every 45 seconds to stay well within 60s timeout)
   const heartbeatInterval = setInterval(() => {
-    res.write(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`);
-    res.flush();
-  }, 30000);
+    try {
+      if (!res.destroyed && !res.finished) {
+        res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: new Date().toISOString() })}\n\n`);
+        res.flush();
+      }
+    } catch (error) {
+      console.error('[logs/queries] Error sending heartbeat:', error);
+      clearInterval(heartbeatInterval);
+    }
+  }, 45000);
 
   // Track processed IDs for real-time updates
   const processedMessageIds = new Set();
@@ -115,7 +122,10 @@ router.get('/queries', async (req, res) => {
   // Real-time updates
   let changeStream;
   try {
-    changeStream = Message.watch([{ $match: { operationType: 'insert' } }], { fullDocument: 'updateLookup' });
+    changeStream = Message.watch([{ $match: { operationType: 'insert' } }], { 
+      fullDocument: 'updateLookup',
+      maxAwaitTimeMS: 30000 // 30 second timeout for change stream operations
+    });
 
     changeStream.on('change', async (change) => {
       if (change.operationType === 'insert') {
@@ -139,21 +149,27 @@ router.get('/queries', async (req, res) => {
         }
 
         try {
-          const logData = await buildLogData(newMessage, 'realtime_log');
-          res.write(`data: ${JSON.stringify(logData)}\n\n`);
-          res.flush();
+          if (!res.destroyed && !res.finished) {
+            const logData = await buildLogData(newMessage, 'realtime_log');
+            res.write(`data: ${JSON.stringify(logData)}\n\n`);
+            res.flush();
+          }
         } catch (error) {
           console.error(`[logs/queries] Error processing real-time log ${newMessage._id}:`, error);
-          res.write(`event: error\ndata: ${JSON.stringify({ message: 'Error processing real-time log' })}\n\n`);
-          res.flush();
+          if (!res.destroyed && !res.finished) {
+            res.write(`event: error\ndata: ${JSON.stringify({ message: 'Error processing real-time log' })}\n\n`);
+            res.flush();
+          }
         }
       }
     });
 
     changeStream.on('error', (error) => {
       console.error('[logs/queries] Change stream error:', error);
-      res.write(`event: error\ndata: ${JSON.stringify({ message: 'Change stream error' })}\n\n`);
-      res.flush();
+      if (!res.destroyed && !res.finished) {
+        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Change stream error', details: error.message })}\n\n`);
+        res.flush();
+      }
     });
   } catch (err) {
     console.warn('[logs/queries] Change streams unavailable; running without real-time updates:', err?.message || err);
@@ -166,15 +182,56 @@ router.get('/queries', async (req, res) => {
   req.on('close', () => {
     console.log('[logs/queries] Client disconnected');
     queryLogger.removeClient(res);
+    
+    // Clean up change stream
     if (changeStream) {
       try {
         changeStream.close();
+        console.log('[logs/queries] Change stream closed successfully');
       } catch (err) {
         console.error('[logs/queries] Error closing change stream:', err);
       }
     }
+    
+    // Clean up heartbeat interval
     clearInterval(heartbeatInterval);
-    res.end();
+    
+    // Ensure response is properly ended
+    if (!res.destroyed && !res.finished) {
+      try {
+        res.end();
+      } catch (err) {
+        console.error('[logs/queries] Error ending response:', err);
+      }
+    }
+  });
+
+  // Handle other disconnect events
+  req.on('error', (error) => {
+    console.error('[logs/queries] Request error:', error);
+    if (changeStream) {
+      try {
+        changeStream.close();
+      } catch (err) {
+        console.error('[logs/queries] Error closing change stream on request error:', err);
+      }
+    }
+    clearInterval(heartbeatInterval);
+  });
+
+  // Set a connection timeout (10 minutes)
+  const connectionTimeout = setTimeout(() => {
+    console.log('[logs/queries] Connection timeout reached, closing connection');
+    if (!res.destroyed && !res.finished) {
+      res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Connection timeout. Please refresh the page.' })}\n\n`);
+      res.flush();
+      res.end();
+    }
+  }, 600000); // 10 minutes
+
+  // Clear timeout on close
+  req.on('close', () => {
+    clearTimeout(connectionTimeout);
   });
 });
 

@@ -35,116 +35,159 @@ function toRow(data: any): QueryLog {
 
 export function useQueryLogs(limit: number = 10, page: number = 1, search: string = '') {
   const esRef = useRef<EventSourcePolyfill | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [logs, setLogs] = useState<QueryLog[]>([]);
   const [connected, setConnected] = useState(false);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isInitialFetchComplete, setIsInitialFetchComplete] = useState(false);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const maxReconnectAttempts = 5;
 
-  const fetchLogs = useCallback(
-    debounce(async (currentPage: number, currentLimit: number, currentSearch: string) => {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setError('No authentication token found');
-        setLoading(false);
-        setLogs([]);
-        return;
-      }
+  const connectSSE = useCallback((currentPage: number, currentLimit: number, currentSearch: string, isReconnect: boolean = false) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setError('No authentication token found');
+      setLoading(false);
+      setLogs([]);
+      return;
+    }
 
+    if (!isReconnect) {
       setLoading(true);
       setError(null);
       setLogs([]);
       setIsInitialFetchComplete(false);
+    }
 
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const params = new URLSearchParams({
-        page: currentPage.toString(),
-        limit: currentLimit.toString(),
-      });
-      if (currentSearch) params.append('search', currentSearch);
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+    const params = new URLSearchParams({
+      page: currentPage.toString(),
+      limit: currentLimit.toString(),
+    });
+    if (currentSearch) params.append('search', currentSearch);
 
-      if (esRef.current) {
-        esRef.current.close();
+    if (esRef.current) {
+      esRef.current.close();
+    }
+
+    const es = new EventSourcePolyfill(`${API_BASE}/api/logs/queries?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      heartbeatTimeout: 70000, // Increased timeout to handle 45s + 25s buffer
+    });
+    esRef.current = es;
+
+    let tempLogs: QueryLog[] = [];
+
+    es.onopen = () => {
+      console.log('[useQueryLogs] SSE connected');
+      setConnected(true);
+      setReconnectAttempts(0); // Reset reconnect attempts on successful connection
+      if (isReconnect) {
+        setError(null); // Clear error on successful reconnection
       }
-      const es = new EventSourcePolyfill(`${API_BASE}/api/logs/queries?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        heartbeatTimeout: 60000,
-      });
-      esRef.current = es;
+    };
 
-      let tempLogs: QueryLog[] = [];
+    es.onmessage = (event) => {
+      if (!event.data || event.data.trim() === '') return;
 
-      es.onopen = () => {
-        console.log('[useQueryLogs] SSE connected');
-        setConnected(true);
-      };
+      try {
+        const data = JSON.parse(event.data);
 
-      es.onmessage = (event) => {
-        if (!event.data || event.data.trim() === '') return;
-
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'heartbeat') return;
-
-          if (data.type === 'init') {
-            setTotal(data.total || 0);
-            if (data.count === 0) {
-              setLoading(false);
-              setIsInitialFetchComplete(true);
-            }
-            return;
-          }
-
-          if (data.type === 'historical_complete') {
-            setLogs(tempLogs.reverse());
-            setIsInitialFetchComplete(true);
-            setLoading(false);
-            return;
-          }
-
-          if (data.event === 'historical_log') {
-            if (typeof data.createdAt !== 'string') return;
-            const logData = toRow(data);
-            tempLogs.push(logData);
-          }
-
-          if (data.event === 'realtime_log') {
-            if (typeof data.createdAt !== 'string') return;
-            const logData = toRow(data);
-            
-            // Only show real-time logs on the first page
-            if (currentPage === 1) {
-              setLogs((prevLogs) => {
-                // Add the new log at the beginning
-                const newLogs = [logData, ...prevLogs];
-                // Keep only the limit number of logs to maintain pagination
-                return newLogs.slice(0, currentLimit);
-              });
-              // Increment total count for new real-time logs
-              setTotal((prevTotal) => prevTotal + 1);
-            }
-          }
-
-          if (data.event === 'error') {
-            setError(data.message || 'Unknown error from server');
-          }
-        } catch (e) {
-          console.error('[useQueryLogs] Error parsing SSE data:', e, 'Raw:', event.data);
+        if (data.type === 'heartbeat') {
+          console.log('[useQueryLogs] Heartbeat received:', data.timestamp);
+          return;
         }
-      };
 
-      es.onerror = () => {
-        console.error('[useQueryLogs] SSE connection error');
-        setError('Failed to maintain real-time logs connection.');
-        es.close();
-        esRef.current = null;
-        setConnected(false);
+        if (data.type === 'init') {
+          setTotal(data.total || 0);
+          if (data.count === 0) {
+            setLoading(false);
+            setIsInitialFetchComplete(true);
+          }
+          return;
+        }
+
+        if (data.type === 'historical_complete') {
+          setLogs(tempLogs.reverse());
+          setIsInitialFetchComplete(true);
+          setLoading(false);
+          return;
+        }
+
+        if (data.event === 'historical_log') {
+          if (typeof data.createdAt !== 'string') return;
+          const logData = toRow(data);
+          tempLogs.push(logData);
+        }
+
+        if (data.event === 'realtime_log') {
+          if (typeof data.createdAt !== 'string') return;
+          const logData = toRow(data);
+          
+          // Only show real-time logs on the first page
+          if (currentPage === 1) {
+            setLogs((prevLogs) => {
+              // Add the new log at the beginning
+              const newLogs = [logData, ...prevLogs];
+              // Keep only the limit number of logs to maintain pagination
+              return newLogs.slice(0, currentLimit);
+            });
+            // Increment total count for new real-time logs
+            setTotal((prevTotal) => prevTotal + 1);
+          }
+        }
+
+        if (data.event === 'error') {
+          console.error('[useQueryLogs] Server error:', data.message);
+          setError(data.message || 'Unknown error from server');
+        }
+
+        if (data.event === 'warning') {
+          console.warn('[useQueryLogs] Server warning:', data.message);
+          setError(data.message || 'Warning from server');
+        }
+      } catch (e) {
+        console.error('[useQueryLogs] Error parsing SSE data:', e, 'Raw:', event.data);
+      }
+    };
+
+    es.onerror = () => {
+      console.error('[useQueryLogs] SSE connection error');
+      es.close();
+      esRef.current = null;
+      setConnected(false);
+      
+      if (reconnectAttempts < maxReconnectAttempts) {
+        const nextAttempt = reconnectAttempts + 1;
+        setReconnectAttempts(nextAttempt);
+        const delay = Math.min(1000 * Math.pow(2, nextAttempt - 1), 30000); // Exponential backoff, max 30s
+        
+        console.log(`[useQueryLogs] Attempting to reconnect (${nextAttempt}/${maxReconnectAttempts}) in ${delay}ms`);
+        setError(`Connection lost. Reconnecting... (${nextAttempt}/${maxReconnectAttempts})`);
+        
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectSSE(currentPage, currentLimit, currentSearch, true);
+        }, delay);
+      } else {
+        setError('Failed to maintain real-time logs connection. Please refresh the page.');
         setLoading(false);
-      };
+      }
+    };
+  }, [reconnectAttempts, maxReconnectAttempts]);
+
+  const fetchLogs = useCallback(
+    debounce((currentPage: number, currentLimit: number, currentSearch: string) => {
+      // Clear any pending reconnection attempts when starting a new fetch
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      setReconnectAttempts(0);
+      connectSSE(currentPage, currentLimit, currentSearch, false);
     }, 50),
-    []
+    [connectSSE]
   );
 
   useEffect(() => {
@@ -165,6 +208,10 @@ export function useQueryLogs(limit: number = 10, page: number = 1, search: strin
         console.log('[useQueryLogs] Cleaning up SSE');
         esRef.current.close();
         esRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       setConnected(false);
     };
