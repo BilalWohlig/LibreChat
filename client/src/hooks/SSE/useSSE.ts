@@ -51,6 +51,7 @@ export default function useSSE(
 
   const { token, isAuthenticated } = useAuthContext();
   const [completed, setCompleted] = useState(new Set());
+  const [activeSSE, setActiveSSE] = useState<InstanceType<typeof SSE> | null>(null);
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
 
@@ -91,6 +92,32 @@ export default function useSSE(
     enabled: !!isAuthenticated && startupConfig?.balance?.enabled,
   });
 
+  // Separate effect to handle explicit stop (when submission becomes null)
+  useEffect(() => {
+    if (submission === null && activeSSE) {
+      console.log('Explicit stop detected - closing SSE connection and aborting backend');
+      
+      // Close the SSE connection
+      if (activeSSE.readyState === 1) { // OPEN state
+        activeSSE.close();
+      }
+      
+      // Call abortConversation to properly clean up backend
+      const latestMessages = getMessages();
+      const userMessage = latestMessages?.find(msg => msg.isCreatedByUser);
+      if (userMessage) {
+        const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
+        abortConversation(
+          conversationId ?? userMessage.conversationId ?? '',
+          { userMessage } as EventSubmission,
+          latestMessages,
+        );
+      }
+      
+      setActiveSSE(null);
+    }
+  }, [submission, activeSSE, getMessages, abortConversation]);
+
   useEffect(() => {
     if (submission == null || Object.keys(submission).length === 0) {
       return;
@@ -105,11 +132,15 @@ export default function useSSE(
     }
 
     let textIndex = null;
+    let isExplicitStop = false;
 
     const sse = new SSE(payloadData.server, {
       payload: JSON.stringify(payload),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
+
+    // Store the SSE instance so the explicit stop effect can access it
+    setActiveSSE(sse);
 
     sse.addEventListener('attachment', (e: MessageEvent) => {
       try {
@@ -119,6 +150,8 @@ export default function useSSE(
         console.error(error);
       }
     });
+
+    let explicitlyClosing = false;
 
     sse.addEventListener('message', (e: MessageEvent) => {
       const data = JSON.parse(e.data);
@@ -189,6 +222,9 @@ export default function useSSE(
       setCompleted((prev) => new Set(prev.add(streamKey)));
       const latestMessages = getMessages();
       const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
+      
+      // Always abort when the cancel event is received from SSE stream
+      isExplicitStop = true;
       return await abortConversation(
         conversationId ??
           userMessage.conversationId ??
@@ -242,13 +278,15 @@ export default function useSSE(
     sse.stream();
 
     return () => {
-      const isCancelled = sse.readyState <= 1;
-      sse.close();
-      if (isCancelled) {
-        const e = new Event('cancel');
-        /* @ts-ignore */
-        sse.dispatchEvent(e);
+      // This cleanup handles navigation away - we don't want to abort the backend
+      if (sse.readyState === 2) { // CLOSED state - connection already closed
+        return;
       }
+      
+      // For navigation away, we keep the backend processing
+      // The explicit stop is handled by the separate effect above
+      console.log('SSE cleanup called due to navigation - allowing background generation to continue');
+      setActiveSSE(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submission]);
