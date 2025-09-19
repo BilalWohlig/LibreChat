@@ -119,13 +119,51 @@ router.get('/queries', async (req, res) => {
   // Track processed IDs for real-time updates
   const processedMessageIds = new Set();
 
-  // Real-time updates
+  // Real-time updates with better error handling for different MongoDB configurations
   let changeStream;
-  try {
-    changeStream = Message.watch([{ $match: { operationType: 'insert' } }], { 
-      fullDocument: 'updateLookup',
-      maxAwaitTimeMS: 30000 // 30 second timeout for change stream operations
-    });
+  let changeStreamSupported = true;
+  
+  // Allow manual disable via environment variable
+  if (process.env.DISABLE_MONGODB_CHANGE_STREAMS === 'true') {
+    console.warn('[logs/queries] Change streams manually disabled via DISABLE_MONGODB_CHANGE_STREAMS');
+    changeStreamSupported = false;
+  }
+  
+  // Check if we're connecting to a local/standalone MongoDB (common with K8s setups)
+  const isStandaloneOrLocal = process.env.MONGO_URI && (
+    process.env.MONGO_URI.includes('localhost') ||
+    process.env.MONGO_URI.includes('127.0.0.1') ||
+    process.env.MONGO_URI.includes('.svc.cluster.local') ||
+    !process.env.MONGO_URI.includes('mongodb+srv')
+  );
+
+  if (isStandaloneOrLocal) {
+    console.warn('[logs/queries] Detected standalone/local MongoDB, skipping change streams');
+    changeStreamSupported = false;
+  }
+
+  if (changeStreamSupported) {
+    try {
+      // Test if change streams are available by checking replica set status
+      const admin = Message.db.admin();
+      const replSetStatus = await admin.command({ replSetGetStatus: 1 }).catch(() => null);
+      
+      if (!replSetStatus) {
+        console.warn('[logs/queries] MongoDB is not running as replica set, disabling change streams');
+        changeStreamSupported = false;
+      }
+    } catch (err) {
+      console.warn('[logs/queries] Cannot check replica set status, disabling change streams:', err.message);
+      changeStreamSupported = false;
+    }
+  }
+
+  if (changeStreamSupported) {
+    try {
+      changeStream = Message.watch([{ $match: { operationType: 'insert' } }], { 
+        fullDocument: 'updateLookup',
+        maxAwaitTimeMS: 30000 // 30 second timeout for change stream operations
+      });
 
     changeStream.on('change', async (change) => {
       if (change.operationType === 'insert') {
@@ -166,16 +204,37 @@ router.get('/queries', async (req, res) => {
 
     changeStream.on('error', (error) => {
       console.error('[logs/queries] Change stream error:', error);
+      changeStreamSupported = false;
+      
+      // Close the problematic change stream
+      if (changeStream) {
+        try {
+          changeStream.close();
+          changeStream = null;
+        } catch (closeErr) {
+          console.error('[logs/queries] Error closing failed change stream:', closeErr);
+        }
+      }
+      
       if (!res.destroyed && !res.finished) {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: 'Change stream error', details: error.message })}\n\n`);
+        res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates disabled due to MongoDB configuration' })}\n\n`);
         res.flush();
       }
     });
+    
+    console.log('[logs/queries] Change streams enabled for real-time updates');
   } catch (err) {
-    console.warn('[logs/queries] Change streams unavailable; running without real-time updates:', err?.message || err);
-    res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates unavailable; showing historical logs only' })}\n\n`);
-    res.flush();
+    console.warn('[logs/queries] Failed to initialize change streams:', err?.message || err);
+    changeStreamSupported = false;
+    changeStream = null;
   }
+}
+
+if (!changeStreamSupported) {
+  console.log('[logs/queries] Running without real-time updates (change streams unavailable)');
+  res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates unavailable; showing historical logs only' })}\n\n`);
+  res.flush();
+}
 
   queryLogger.addClient(res);
 
