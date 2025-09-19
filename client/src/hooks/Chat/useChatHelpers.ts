@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRecoilState, useResetRecoilState, useSetRecoilState } from 'recoil';
@@ -86,7 +86,7 @@ export default function useChatHelpers(index = 0, paramId?: string) {
     setLatestMessage,
   });
 
-  const continueGeneration = () => {
+  const continueGeneration = useCallback(() => {
     if (!latestMessage) {
       console.error('Failed to regenerate the message: latestMessage not found.');
       return;
@@ -105,7 +105,7 @@ export default function useChatHelpers(index = 0, paramId?: string) {
         'Failed to regenerate the message: parentMessage not found, or not created by user.',
       );
     }
-  };
+  }, [latestMessage, getMessages, ask]);
 
   const stopGenerating = () => clearAllSubmissions();
 
@@ -137,6 +137,59 @@ export default function useChatHelpers(index = 0, paramId?: string) {
   const [showAgentSettings, setShowAgentSettings] = useRecoilState(
     store.showAgentSettingsFamily(index),
   );
+
+  // Detect and handle unfinished messages - restore UI state only
+  useEffect(() => {
+    if (!_messages || !conversation || isSubmitting) {
+      return;
+    }
+
+    // Check if we have unfinished messages
+    const unfinishedMessages = _messages.filter(msg => 
+      !msg.isCreatedByUser && msg.unfinished === true
+    );
+
+    if (unfinishedMessages.length === 0) {
+      return;
+    }
+
+    const latestUnfinishedMessage = unfinishedMessages[unfinishedMessages.length - 1];
+    
+    // Only handle the latest unfinished message
+    const sortedMessages = [..._messages].sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeA - timeB;
+    });
+    
+    const actualLatestMessage = sortedMessages[sortedMessages.length - 1];
+    
+    if (actualLatestMessage?.messageId !== latestUnfinishedMessage.messageId) {
+      return;
+    }
+
+    // Set this as the latest message to ensure proper UI state
+    setLatestMessage(latestUnfinishedMessage);
+
+    console.log('Detected unfinished message, setting up polling for completion:', latestUnfinishedMessage.messageId);
+
+    // Poll for message updates to show completion when it happens
+    const pollForCompletion = () => {
+      queryClient.invalidateQueries([QueryKeys.messages, conversationId]);
+    };
+
+    // Poll every 2 seconds for up to 60 seconds
+    const pollInterval = setInterval(pollForCompletion, 2000);
+    const timeout = setTimeout(() => {
+      clearInterval(pollInterval);
+      console.log('Polling timeout reached for unfinished message');
+    }, 60000);
+
+    return () => {
+      clearInterval(pollInterval);
+      clearTimeout(timeout);
+    };
+  }, [_messages, conversation, conversationId, isSubmitting, setLatestMessage, queryClient]);
 
   return {
     newConversation,
