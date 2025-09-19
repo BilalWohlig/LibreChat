@@ -138,9 +138,9 @@ export default function useChatHelpers(index = 0, paramId?: string) {
     store.showAgentSettingsFamily(index),
   );
 
-  // Detect and handle unfinished messages - restore UI state only
+  // Detect and handle unfinished messages - restore UI state and resume polling
   useEffect(() => {
-    if (!_messages || !conversation || isSubmitting) {
+    if (!_messages || !conversation) {
       return;
     }
 
@@ -165,31 +165,96 @@ export default function useChatHelpers(index = 0, paramId?: string) {
     const actualLatestMessage = sortedMessages[sortedMessages.length - 1];
     
     if (actualLatestMessage?.messageId !== latestUnfinishedMessage.messageId) {
+      console.log('Unfinished message is not the latest message, skipping');
       return;
+    }
+
+    // Only proceed if the message is recent (within last 5 minutes)
+    if (latestUnfinishedMessage.createdAt) {
+      const messageTime = new Date(latestUnfinishedMessage.createdAt).getTime();
+      const now = new Date().getTime();
+      const fiveMinutesAgo = now - (5 * 60 * 1000);
+      
+      if (messageTime < fiveMinutesAgo) {
+        console.log('Unfinished message is too old, skipping');
+        return;
+      }
     }
 
     // Set this as the latest message to ensure proper UI state
     setLatestMessage(latestUnfinishedMessage);
+    setIsSubmitting(true); // Show that we're waiting for completion
 
-    console.log('Detected unfinished message, setting up polling for completion:', latestUnfinishedMessage.messageId);
+    console.log('🔄 Detected recent unfinished message, starting enhanced polling:');
+    console.log('- Message ID:', latestUnfinishedMessage.messageId);
+    console.log('- Conversation ID:', conversationId);
+    console.log('- Current text length:', latestUnfinishedMessage.text?.length || 0);
+    console.log('- Is unfinished:', latestUnfinishedMessage.unfinished);
 
-    // Poll for message updates to show completion when it happens
+    let previousMessageText = latestUnfinishedMessage.text || '';
+    let pollCount = 0;
+
+    // Enhanced polling that checks for actual message updates
     const pollForCompletion = () => {
-      queryClient.invalidateQueries([QueryKeys.messages, conversationId]);
+      pollCount++;
+      console.log(`📡 Polling attempt ${pollCount} for message completion...`);
+      
+      // Refetch the messages to get the latest state
+      queryClient.refetchQueries([QueryKeys.messages, conversationId]).then(() => {
+        const updatedMessages = queryClient.getQueryData<TMessage[]>([QueryKeys.messages, conversationId]);
+        const updatedMessage = updatedMessages?.find(msg => msg.messageId === latestUnfinishedMessage.messageId);
+        
+        if (updatedMessage) {
+          console.log(`📋 Poll ${pollCount} - Message status:`, {
+            unfinished: updatedMessage.unfinished,
+            textLength: updatedMessage.text?.length || 0,
+            hasNewText: updatedMessage.text !== previousMessageText
+          });
+          
+          // Check if the message is no longer unfinished
+          if (!updatedMessage.unfinished) {
+            console.log('✅ Message completed! Clearing polling and updating UI');
+            clearInterval(pollInterval);
+            clearTimeout(timeout);
+            setIsSubmitting(false);
+            setLatestMessage(updatedMessage);
+            return;
+          }
+          
+          // Check if the text has been updated (partial streaming completion)
+          if (updatedMessage.text && updatedMessage.text !== previousMessageText) {
+            console.log('📝 Message text updated:', updatedMessage.text.length, 'characters');
+            previousMessageText = updatedMessage.text;
+            setLatestMessage(updatedMessage);
+          }
+        } else {
+          console.log(`❌ Poll ${pollCount} - Message not found in updated data`);
+        }
+      }).catch(error => {
+        console.error('❌ Error polling for message completion:', error);
+      });
     };
 
-    // Poll every 2 seconds for up to 60 seconds
-    const pollInterval = setInterval(pollForCompletion, 2000);
+    // Start with an immediate poll
+    pollForCompletion();
+
+    // Poll every 1.5 seconds for more responsive updates
+    const pollInterval = setInterval(pollForCompletion, 1500);
+    
+    // Clean up after 2 minutes
     const timeout = setTimeout(() => {
       clearInterval(pollInterval);
-      console.log('Polling timeout reached for unfinished message');
-    }, 60000);
+      setIsSubmitting(false);
+      console.log('⏰ Polling timeout reached for unfinished message after', pollCount, 'attempts');
+    }, 120000);
 
     return () => {
       clearInterval(pollInterval);
       clearTimeout(timeout);
+      setIsSubmitting(false);
+      console.log('🧹 Cleanup: Stopped polling for message completion');
     };
-  }, [_messages, conversation, conversationId, isSubmitting, setLatestMessage, queryClient]);
+  }, [_messages, conversation, conversationId, setLatestMessage, setIsSubmitting, queryClient]);
 
   return {
     newConversation,
