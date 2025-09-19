@@ -314,23 +314,77 @@ class GoogleClient extends BaseClient {
    * @param {TMessage[]} messages
    */
   async buildAugmentedPrompt(messages = []) {
-    const attachments = await this.options.attachments;
     const latestMessage = { ...messages[messages.length - 1] };
-    this.contextHandlers = createContextHandlers(this.options.req, latestMessage.text);
 
-    if (this.contextHandlers) {
-      for (const file of attachments) {
-        if (file.embedded) {
-          this.contextHandlers?.processFile(file);
-          continue;
-        }
-        if (file.metadata?.fileIdentifier) {
-          continue;
-        }
+    // Existing code for new attachments
+    if (this.options.attachments) {
+      const attachments = await this.options.attachments;
+
+      // Initialize message_file_map if it doesn't exist
+      if (this.message_file_map) {
+        this.message_file_map[latestMessage.messageId] = attachments;
+      } else {
+        this.message_file_map = {
+          [latestMessage.messageId]: attachments,
+        };
       }
 
-      this.augmentedPrompt = await this.contextHandlers.createContext();
-      this.systemMessage = this.augmentedPrompt + this.systemMessage;
+      this.contextHandlers = createContextHandlers(this.options.req, latestMessage.text);
+
+      if (this.contextHandlers) {
+        for (const file of attachments) {
+          if (file.embedded) {
+            this.contextHandlers?.processFile(file);
+            continue;
+          }
+          if (file.metadata?.fileIdentifier) {
+            continue;
+          }
+        }
+
+        this.augmentedPrompt = await this.contextHandlers.createContext();
+        this.systemMessage = this.augmentedPrompt + this.systemMessage;
+      }
+      return; // Exit early if we processed new attachments
+    }
+
+    // Handle embedded files from previous messages when no new attachments
+    const embeddedFiles = [];
+
+    // Check message_file_map first
+    if (this.message_file_map) {
+      Object.values(this.message_file_map)
+        .flat()
+        .forEach((file) => {
+          if (file.embedded && !embeddedFiles.some((f) => f.file_id === file.file_id)) {
+            embeddedFiles.push(file);
+          }
+        });
+    } else {
+      // If message_file_map doesn't exist, check message files directly
+      for (const message of messages) {
+        if (message.files) {
+          for (const file of message.files) {
+            if (file.embedded && !embeddedFiles.some((f) => f.file_id === file.file_id)) {
+              embeddedFiles.push(file);
+            }
+          }
+        }
+      }
+    }
+
+    // Create context handlers for embedded files
+    if (embeddedFiles.length > 0) {
+      this.contextHandlers = createContextHandlers(this.options.req, latestMessage.text);
+
+      if (this.contextHandlers) {
+        for (const file of embeddedFiles) {
+          this.contextHandlers.processFile(file);
+        }
+
+        this.augmentedPrompt = await this.contextHandlers.createContext();
+        this.systemMessage = this.augmentedPrompt + this.systemMessage;
+      }
     }
   }
 
