@@ -6,11 +6,12 @@ import DataTable from '~/components/ui/DataTable';
 import { ColumnDef } from '@tanstack/react-table';
 import { SearchBar } from '~/views/admin/AdminSearchBar';
 import { Pagination } from '~/components/ui/Pagination';
-import { ArrowLeft, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Info, Download } from 'lucide-react';
 import { cn } from '~/utils';
 import moment from 'moment';
 import { useAdminLogs } from './useAdmin';
 import AdminLogsDialog from './AdminLogsDialog';
+
 
 type RawUser = { _id: string; email?: string; username?: string; name?: string } | string;
 
@@ -38,7 +39,6 @@ export type RowLog = {
   details?: any;
   tokenUsage?: RawLog['tokenUsage'];
 };
- 
 
 type UserCache = Record<string, { email?: string; name?: string; username?: string }>;
 
@@ -72,6 +72,45 @@ export default function AdminLogs() {
 
   // Process logs from useAdminLogs
   const rows = useMemo(() => logs.map((log: any) => toRow(log, userCache)), [logs, userCache]);
+
+
+  const handleGoBack = () => {
+    const previousPage = sessionStorage.getItem('previousPage') || '/dashboard';
+    navigate(previousPage);
+  };
+
+  // Handle CSV export
+  const handleExport = async () => {
+    try {
+      const queryParams = new URLSearchParams({
+        ...(search && searchCategory === 'all' ? { search } : {}),
+        ...(search && searchCategory === 'action' ? { action: search } : {}),
+        all: 'true', // Export all logs
+      });
+      const response = await fetch(`/api/user-activity/export?${queryParams}`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`, // Adjust based on your auth mechanism
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export logs');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `user-activity-logs-${moment().format('YYYY-MM-DD')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('[AdminLogs] Export error:', error);
+      alert('Failed to export logs');
+    }
+  };
 
   // Log for debugging
   useEffect(() => {
@@ -112,8 +151,8 @@ export default function AdminLogs() {
       if (mainContainerRef.current) {
         const windowHeight = window.innerHeight;
         const containerTop = mainContainerRef.current.getBoundingClientRect().top;
-        const paginationHeight = 80; // Increased to account for pagination
-        const bottomPadding = 20; // Additional padding at bottom
+        const paginationHeight = 80;
+        const bottomPadding = 20;
         const availableHeight = windowHeight - containerTop - paginationHeight - bottomPadding;
         mainContainerRef.current.style.height = `${Math.max(300, availableHeight)}px`;
       }
@@ -247,18 +286,24 @@ export default function AdminLogs() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate('/c/new')}
+            onClick={handleGoBack}
             className="rounded-full"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <h1 className="text-xl font-semibold">System Logs</h1>
         </div>
-        {connected && (
-          <span className="text-sm text-green-600">Live</span>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          className="flex items-center gap-2"
+        >
+          <Download className="h-4 w-4" />
+          Export
+        </Button>
       </div>
-
+      
       {/* Search with Category Selection */}
       <div className="flex w-full gap-2">
         <SearchBar
