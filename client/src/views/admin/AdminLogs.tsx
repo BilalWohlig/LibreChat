@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '~/components/ui/Button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '~/components/ui/Dialog';
 import DataTable from '~/components/ui/DataTable';
@@ -11,7 +10,7 @@ import { cn } from '~/utils';
 import moment from 'moment';
 import { useAdminLogs } from './useAdmin';
 import AdminLogsDialog from './AdminLogsDialog';
-
+import { useNavigate } from 'react-router-dom';
 
 type RawUser = { _id: string; email?: string; username?: string; name?: string } | string;
 
@@ -60,7 +59,6 @@ function toRow(log: RawLog, cache: UserCache): RowLog {
 }
 
 export default function AdminLogs() {
-  const navigate = useNavigate();
   const [userCache] = useState<UserCache>({});
   const [selected, setSelected] = useState<RowLog | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -72,10 +70,10 @@ export default function AdminLogs() {
 
   // Process logs from useAdminLogs
   const rows = useMemo(() => logs.map((log: any) => toRow(log, userCache)), [logs, userCache]);
-
+  const navigate = useNavigate();
 
   const handleGoBack = () => {
-    const previousPage = sessionStorage.getItem('previousPage') || '/dashboard';
+    const previousPage = sessionStorage.getItem('previousPage') || '/c/new';
     navigate(previousPage);
   };
 

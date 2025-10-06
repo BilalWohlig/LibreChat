@@ -199,7 +199,7 @@ export function useQueryLogs(limit: number = 10, page: number = 1, search: strin
 const QueryLogs: React.FC = () => {
   const navigate = useNavigate();
   const handleGoBack = () => {
-    const previousPage = sessionStorage.getItem('previousPage') || '/dashboard';
+    const previousPage = sessionStorage.getItem('previousPage') || '/c/new';
     navigate(previousPage);
   };
   const mainContainerRef = useRef<HTMLDivElement>(null);

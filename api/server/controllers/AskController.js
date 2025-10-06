@@ -13,6 +13,8 @@ const {
 const { sendMessage, createOnProgress } = require('~/server/utils');
 const { saveMessage, getConvo } = require('~/models');
 const { logger } = require('~/config');
+const { UserActivityLog } = require('~/db/models');
+const queryLogger = require('~/server/services/QueryLogger');
 
 const AskController = async (req, res, next, initializeClient, addTitle) => {
   let {
@@ -48,9 +50,9 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
     model: endpointOption.modelOptions?.model,
     modelDisplayLabel,
   });
-  const userId = req.user.id;
   const initialConversationId = conversationId;
   const newConvo = !initialConversationId;
+  const userId = req.user.id;
 
   let reqDataContext = {
     userMessage,
@@ -76,7 +78,6 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
 
   const performCleanup = () => {
     logger.debug('[AskController] Performing cleanup');
-    
     if (Array.isArray(cleanupHandlers)) {
       for (const handler of cleanupHandlers) {
         try {
@@ -117,6 +118,36 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
   };
 
   try {
+    /** --- MODEL CHANGE LOGGING (compare against existing convo BEFORE request updates it) --- */
+    try {
+      const requestedModel =
+        endpointOption?.modelOptions?.model ||
+        endpointOption?.model;
+
+      if (conversationId && requestedModel) {
+        const prevConvo = await getConvo(req.user.id, conversationId);
+        const prevModel = prevConvo?.model ?? null;
+
+        if (prevModel && requestedModel && prevModel !== requestedModel) {
+          const { logAndBroadcastActivity } = require('~/server/services/UserActivityService');
+          await logAndBroadcastActivity(req.user.id, 'MODEL CHANGED', {
+            fromModel: prevModel,
+            toModel: requestedModel,
+            conversationId,
+            endpoint: endpointOption?.endpoint,
+          });
+        } else {
+          logger.debug('[AskController] No model change detected (pre-log)', {
+            prevModel,
+            requestedModel,
+          });
+        }
+      }
+    } catch (e) {
+      logger.error('[AskController] MODEL CHANGED pre-log failed:', e);
+    }
+    /** --- END MODEL CHANGE LOGGING --- */
+
     ({ client } = await initializeClient({ req, res, endpointOption }));
     if (clientRegistry && client) {
       clientRegistry.register(client, { userId }, client);
@@ -157,24 +188,8 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
       if (!abortController || abortController.signal.aborted || abortController.requestCompleted) {
         return;
       }
-      
-      // Instead of immediately aborting, allow the generation to continue in background
-      // Set a flag to indicate the client disconnected
-      abortController.clientDisconnected = true;
-      
-      // Set a timeout to abort if no reconnection happens within a reasonable time
-      const gracePeriod = process.env.RESPONSE_GRACE_PERIOD || 15000; // 15 seconds default
-      const timeoutId = setTimeout(() => {
-        if (!abortController.signal.aborted && !abortController.requestCompleted) {
-          logger.debug('[AskController] Grace period expired, aborting background generation');
-          abortController.abort();
-        }
-      }, gracePeriod);
-      
-      // Store timeout ID for potential cleanup
-      abortController.gracePeriodTimeout = timeoutId;
-      
-      logger.debug('[AskController] Client disconnected, continuing generation in background');
+      abortController.abort();
+      logger.debug('[AskController] Request aborted on close');
     };
 
     res.on('close', closeHandler);
@@ -234,11 +249,7 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
       });
       res.end();
 
-      // Clear the grace period timeout since generation completed successfully
-      if (abortController.gracePeriodTimeout) {
-        clearTimeout(abortController.gracePeriodTimeout);
-        abortController.gracePeriodTimeout = null;
-      }
+      
     }
 
     if (!client?.skipSaveUserMessage && latestUserMessage) {

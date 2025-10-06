@@ -33,7 +33,7 @@ export default function AdminDashboard() {
 
   const handleGoBack = () => {
     // Retrieve the previous page URL from sessionStorage
-    const previousPage = sessionStorage.getItem('previousPage') || '/dashboard'; // Default to '/dashboard'
+    const previousPage = sessionStorage.getItem('previousPage') || '/c/new'; 
 
     // Navigate back to the previous page
     navigate(previousPage);
