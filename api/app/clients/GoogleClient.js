@@ -909,32 +909,21 @@ class GoogleClient extends BaseClient {
   }
 
   /**
-   * Calculates the correct token count for the current user message based on the token count map and API usage.
-   * Edge case: If the calculation results in a negative value, it returns the original estimate.
-   * If revisiting a conversation with a chat history entirely composed of token estimates,
-   * the cumulative token count going forward should become more accurate as the conversation progresses.
-   * @param {Object} params - The parameters for the calculation.
-   * @param {Record<string, number>} params.tokenCountMap - A map of message IDs to their token counts.
-   * @param {string} params.currentMessageId - The ID of the current message to calculate.
-   * @param {UsageMetadata} params.usage - The usage object returned by the API.
-   * @returns {number} The correct token count for the current user message.
-   */
-  calculateCurrentTokenCount({ tokenCountMap, currentMessageId, usage }) {
-    const originalEstimate = tokenCountMap[currentMessageId] || 0;
-
-    if (!usage || typeof usage.input_tokens !== 'number') {
-      return originalEstimate;
-    }
-
-    tokenCountMap[currentMessageId] = 0;
-    const totalTokensFromMap = Object.values(tokenCountMap).reduce((sum, count) => {
-      const numCount = Number(count);
-      return sum + (isNaN(numCount) ? 0 : numCount);
-    }, 0);
-    const totalInputTokens = usage.input_tokens ?? 0;
-    const currentMessageTokens = totalInputTokens - totalTokensFromMap;
-    return currentMessageTokens > 0 ? currentMessageTokens : originalEstimate;
+ * Calculates the correct token count for the current user message based on the token count map and API usage.
+ * Edge case: If the calculation results in a negative value, it returns the original estimate.
+ * If revisiting a conversation with a chat history entirely composed of token estimates,
+ * the cumulative token count going forward should become more accurate as the conversation progresses.
+ * @param {Object} params - The parameters for the calculation.
+ * @param {Record<string, number>} params.tokenCountMap - A map of message IDs to their token counts.
+ * @param {string} params.currentMessageId - The ID of the current message to calculate.
+ * @param {UsageMetadata} params.usage - The usage object returned by the API.
+ * @returns {number} The correct token count for the current user message.
+ */
+  calculateCurrentTokenCount({ tokenCountMap, currentMessageId }) {
+    // Return just the original estimate (user's message tokens only)
+    return tokenCountMap[currentMessageId] || 0;
   }
+
 
   /**
    * @param {object} params
