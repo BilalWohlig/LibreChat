@@ -81,7 +81,7 @@ RUN npm config set fetch-retry-maxtimeout 600000 && \
     npm ci --workspaces --include-workspace-root
 
 # Build frontend
-RUN NODE_OPTIONS="--max-old-space-size=2048" npm run frontend
+RUN NODE_OPTIONS="--max-old-space-size=6144" npm run frontend
 
 # Verify build
 RUN test -f /app/client/dist/index.html || (echo "Frontend build failed!" && exit 1)
