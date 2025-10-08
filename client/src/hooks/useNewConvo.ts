@@ -40,6 +40,7 @@ const useNewConvo = (index = 0) => {
   const clearAllConversations = store.useClearConvoState();
   const defaultPreset = useRecoilValue(store.defaultPreset);
   const { setConversation } = store.useCreateConversationAtom(index);
+  const { conversation: currentConversation } = store.useCreateConversationAtom(index);
   const [files, setFiles] = useRecoilState(store.filesByIndex(index));
   const saveBadgesState = useRecoilValue<boolean>(store.saveBadgesState);
   const clearAllLatestMessages = store.useClearLatestMessages(`useNewConvo ${index}`);
@@ -159,8 +160,13 @@ const useNewConvo = (index = 0) => {
           conversation.disableParams = true;
         }
 
+        // Avoid clearing conversations when navigating back to the same conversation
         if (!(keepAddedConvos ?? false)) {
-          clearAllConversations(true);
+          const targetId = conversation.conversationId ?? '';
+          const currentId = currentConversation?.conversationId ?? '';
+          if (targetId !== currentId) {
+            clearAllConversations(true);
+          }
         }
         const isCancelled = conversation.conversationId?.startsWith('_');
         if (isCancelled) {
@@ -177,7 +183,7 @@ const useNewConvo = (index = 0) => {
           logger.log('conversation', 'Setting conversation from `useNewConvo`', conversation);
           setConversation(conversation);
         }
-        setSubmission({} as TSubmission);
+        setSubmission(null);
         if (!(keepLatestMessage ?? false)) {
           clearAllLatestMessages();
         }

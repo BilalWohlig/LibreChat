@@ -32,11 +32,28 @@ export default function AdminDashboard() {
   const [usageOpen, setUsageOpen] = useState(false);
 
   const handleGoBack = () => {
-    // Retrieve the previous page URL from sessionStorage
-    const previousPage = sessionStorage.getItem('previousPage') || '/c/new'; 
+    // Prefer session-stored previous page set by AdminPanel
+    const previousPage = sessionStorage.getItem('previousPage');
+    if (previousPage) {
+      navigate(previousPage);
+      return;
+    }
 
-    // Navigate back to the previous page
-    navigate(previousPage);
+    // Try to restore last active conversation from localStorage
+    try {
+      const raw = localStorage.getItem('LAST_CONVO_SETUP_0');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const convoId = parsed?.conversationId;
+        if (convoId && convoId !== 'new') {
+          navigate(`/c/${convoId}`);
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback
+    navigate('/c/new');
   };
 
   // --- Fetch Users ---
@@ -195,6 +212,7 @@ export default function AdminDashboard() {
             variant="ghost"
             size="icon"
             onClick={handleGoBack}
+            // onClick={() => (window.location.href = '/c/new')}
             className="rounded-full"
           >
             <ArrowLeft className="h-5 w-5" />

@@ -95,35 +95,44 @@ export default function useSSE(
   // Separate effect to handle explicit stop (when submission becomes null)
   useEffect(() => {
     if (submission === null && activeSSE) {
-      console.log('Explicit stop detected - closing SSE connection and aborting backend');
-      
+      console.log('Explicit stop detected - closing SSE connection');
+
       // Close the SSE connection
-      if (activeSSE.readyState === 1) { // OPEN state
+      if (activeSSE.readyState === 1) {
+        // OPEN state
         activeSSE.close();
       }
-      
-      // Call abortConversation to properly clean up backend
-      const latestMessages = getMessages();
-      const userMessage = latestMessages?.find(msg => msg.isCreatedByUser);
-      if (userMessage) {
-        const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
-        abortConversation(
-          conversationId ?? userMessage.conversationId ?? '',
-          { userMessage } as EventSubmission,
-          latestMessages,
-        );
-      }
-      
+
+      // Simply close the connection without calling abortConversation
+      // The cleanup will be handled by the navigation
       setActiveSSE(null);
+      setIsSubmitting(false);
     }
-  }, [submission, activeSSE, getMessages, abortConversation]);
+  }, [submission, activeSSE, setIsSubmitting]);
 
   useEffect(() => {
     if (submission == null || Object.keys(submission).length === 0) {
       return;
     }
 
+    // Prevent SSE reconnection if we're navigating back from admin pages
+    // Check if there's already an active SSE connection for this submission
+    const submissionKey = `activeSSE_${submission.userMessage?.messageId || submission.conversation?.conversationId}`;
+    const hasActiveSSE = localStorage.getItem(submissionKey) === 'true';
+
+    if (hasActiveSSE && activeSSE) {
+      console.log('SSE: Preventing reconnection during navigation');
+      return;
+    }
+
     let { userMessage } = submission;
+
+    // FIXED: Add defensive check for userMessage
+    if (!userMessage || !userMessage.messageId) {
+      console.warn('SSE: Invalid submission - missing userMessage or messageId');
+      setIsSubmitting(false);
+      return;
+    }
 
     const payloadData = createPayload(submission);
     let { payload } = payloadData;
@@ -133,6 +142,12 @@ export default function useSSE(
 
     let textIndex = null;
     let isExplicitStop = false;
+
+    // Prevent duplicate SSE streams for the same response/message id
+    const sseKey = `sse_${submission.initialResponse?.messageId || submission.userMessage?.messageId || ''}`;
+    if (sseKey && localStorage.getItem(sseKey) === 'open') {
+      return;
+    }
 
     const sse = new SSE(payloadData.server, {
       payload: JSON.stringify(payload),
@@ -169,7 +184,7 @@ export default function useSSE(
         userMessage = {
           ...userMessage,
           ...data.message,
-          overrideParentMessageId: userMessage.overrideParentMessageId,
+          overrideParentMessageId: userMessage?.overrideParentMessageId,
         };
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
@@ -206,6 +221,11 @@ export default function useSSE(
     sse.addEventListener('open', () => {
       setAbortScroll(false);
       console.log('connection is opened');
+      // Mark this SSE connection as active
+      localStorage.setItem(submissionKey, 'true');
+      if (sseKey) {
+        localStorage.setItem(sseKey, 'open');
+      }
     });
 
     sse.addEventListener('cancel', async () => {
@@ -222,12 +242,12 @@ export default function useSSE(
       setCompleted((prev) => new Set(prev.add(streamKey)));
       const latestMessages = getMessages();
       const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
-      
+
       // Always abort when the cancel event is received from SSE stream
       isExplicitStop = true;
       return await abortConversation(
         conversationId ??
-          userMessage.conversationId ??
+          userMessage?.conversationId ??
           submission.conversation?.conversationId ??
           '',
         submission as EventSubmission,
@@ -255,7 +275,8 @@ export default function useSSE(
           return;
         } catch (error) {
           /* token refresh failed, continue handling the original 401 */
-          console.log(error);
+          console.log('SSE token refresh failed:', error);
+          // Don't automatically redirect on SSE 401 errors to prevent chat disruption
         }
       }
 
@@ -279,41 +300,23 @@ export default function useSSE(
 
     return () => {
       // This cleanup handles navigation away - we don't want to abort the backend
-      if (sse.readyState === 2) { // CLOSED state - connection already closed
+      if (sse.readyState === 2) {
+        // CLOSED state - connection already closed
         return;
       }
-      
+
       // For navigation away, we keep the backend processing
       // The explicit stop is handled by the separate effect above
-      console.log('SSE cleanup called due to navigation - allowing background generation to continue');
+      console.log(
+        'SSE cleanup called due to navigation - allowing background generation to continue',
+      );
       setActiveSSE(null);
+      // Clear the localStorage flag when SSE is cleaned up
+      localStorage.removeItem(submissionKey);
+      if (sseKey) {
+        localStorage.removeItem(sseKey);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submission]);
-
-    // Separate effect to handle explicit stop (when submission becomes null)
-  useEffect(() => {
-    if (submission === null && activeSSE) {
-      console.log('Explicit stop detected - closing SSE connection and aborting backend');
-      
-      // Close the SSE connection
-      if (activeSSE.readyState === 1) { // OPEN state
-        activeSSE.close();
-      }
-      
-      // Call abortConversation to properly clean up backend
-      const latestMessages = getMessages();
-      const userMessage = latestMessages?.find(msg => msg.isCreatedByUser);
-      if (userMessage) {
-        const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
-        abortConversation(
-          conversationId ?? userMessage.conversationId ?? '',
-          { userMessage } as EventSubmission,
-          latestMessages,
-        );
-      }
-      
-      setActiveSSE(null);
-    }
-  }, [submission, activeSSE, getMessages, abortConversation]);
 }

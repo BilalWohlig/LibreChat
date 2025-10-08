@@ -132,6 +132,9 @@ export default function useChatFunctions({
     const isEditOrContinue = isEdited || isContinued;
 
     let currentMessages: TMessage[] | null = overrideMessages ?? getMessages() ?? [];
+    if (!Array.isArray(currentMessages)) {
+      currentMessages = [];
+    }
 
     if (conversation?.promptPrefix) {
       conversation.promptPrefix = replaceSpecialVars({
@@ -163,15 +166,17 @@ export default function useChatFunctions({
       navigate('/c/new', { state: { focusChat: true } });
     }
 
-    const targetParentMessageId = isRegenerate ? messageId : latestMessage?.parentMessageId;
+    const targetParentMessageId = isRegenerate
+      ? (messageId ?? null)
+      : (latestMessage?.parentMessageId ?? null);
     /**
      * If the user regenerated or resubmitted the message, the current parent is technically
      * the latest user message, which is passed into `ask`; otherwise, we can rely on the
      * latestMessage to find the parent.
      */
-    const targetParentMessage = currentMessages.find(
-      (msg) => msg.messageId === targetParentMessageId,
-    );
+    const targetParentMessage = targetParentMessageId
+      ? currentMessages.find((msg) => msg.messageId === targetParentMessageId)
+      : undefined;
 
     let thread_id = targetParentMessage?.thread_id ?? latestMessage?.thread_id;
     if (thread_id == null) {
@@ -248,8 +253,8 @@ export default function useChatFunctions({
     const generation = editedText ?? latestMessage?.text ?? '';
     const responseText = isEditOrContinue ? generation : '';
 
-    const responseMessageId =
-      editedMessageId ?? (latestMessage?.messageId ? latestMessage?.messageId + '_' : null) ?? null;
+    const latestId = latestMessage?.messageId;
+    const responseMessageId = editedMessageId ?? (latestId ? `${latestId}_` : undefined);
     const initialResponse: TMessage = {
       sender: responseSender,
       text: responseText,
@@ -303,7 +308,7 @@ export default function useChatFunctions({
       setShowStopButton(true);
     }
 
-    if (isContinued) {
+    if (isContinued && responseMessageId) {
       currentMessages = currentMessages.filter((msg) => msg.messageId !== responseMessageId);
     }
 
@@ -330,10 +335,13 @@ export default function useChatFunctions({
       ephemeralAgent,
     };
 
+    const safeBase = Array.isArray(submission.messages)
+      ? (submission.messages.filter(Boolean) as TMessage[])
+      : ([] as TMessage[]);
     if (isRegenerate) {
-      setMessages([...submission.messages, initialResponse]);
+      setMessages([...safeBase, initialResponse].filter(Boolean) as TMessage[]);
     } else {
-      setMessages([...submission.messages, currentMsg, initialResponse]);
+      setMessages([...safeBase, currentMsg, initialResponse].filter(Boolean) as TMessage[]);
     }
     if (index === 0 && setLatestMessage) {
       setLatestMessage(initialResponse);

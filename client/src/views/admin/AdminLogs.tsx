@@ -73,8 +73,25 @@ export default function AdminLogs() {
   const navigate = useNavigate();
 
   const handleGoBack = () => {
-    const previousPage = sessionStorage.getItem('previousPage') || '/c/new';
-    navigate(previousPage);
+    const previousPage = sessionStorage.getItem('previousPage');
+    if (previousPage) {
+      navigate(previousPage);
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem('LAST_CONVO_SETUP_0');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const convoId = parsed?.conversationId;
+        if (convoId && convoId !== 'new') {
+          navigate(`/c/${convoId}`);
+          return;
+        }
+      }
+    } catch (_) {}
+
+    navigate('/c/new');
   };
 
   // Handle CSV export
@@ -285,6 +302,7 @@ export default function AdminLogs() {
             variant="ghost"
             size="icon"
             onClick={handleGoBack}
+            // onClick={() => (window.location.href = '/c/new')}
             className="rounded-full"
           >
             <ArrowLeft className="h-5 w-5" />

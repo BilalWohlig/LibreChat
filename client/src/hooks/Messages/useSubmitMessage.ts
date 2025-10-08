@@ -1,5 +1,5 @@
 import { v4 } from 'uuid';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useRecoilValue, useSetRecoilState } from 'recoil';
 import { Constants, replaceSpecialVars } from 'librechat-data-provider';
 import { useChatContext, useChatFormContext, useAddedChatContext } from '~/Providers';
@@ -22,18 +22,34 @@ export default function useSubmitMessage() {
   const autoSendPrompts = useRecoilValue(store.autoSendPrompts);
   const activeConvos = useRecoilValue(store.allConversationsSelector);
   const setActivePrompt = useSetRecoilState(store.activePromptByIndex(index));
+  // Guard against rapid duplicate submissions (double enter / double click / focus changes)
+  const lastSubmitRef = useRef<{ text: string; ts: number }>({ text: '', ts: 0 });
 
   const submitMessage = useCallback(
     (data?: { text: string }) => {
       if (!data) {
         return console.warn('No data provided to submitMessage');
       }
-      const rootMessages = getMessages();
-      const isLatestInRootMessages = rootMessages?.some(
-        (message) => message.messageId === latestMessage?.messageId,
-      );
+      const now = Date.now();
+      const last = lastSubmitRef.current;
+      const normalizedText = (data.text ?? '').trim();
+      if (normalizedText.length === 0) {
+        return;
+      }
+      // Ignore same-text submit within 1.5s window to prevent accidental resubmits
+      if (last.text === normalizedText && now - last.ts < 1500) {
+        return;
+      }
+      lastSubmitRef.current = { text: normalizedText, ts: now };
+      const rootMessagesRaw = getMessages();
+      const rootMessages = Array.isArray(rootMessagesRaw)
+        ? (rootMessagesRaw.filter(Boolean) as any[])
+        : [];
+      const latestId = latestMessage?.messageId;
+      const isLatestInRootMessages =
+        latestId != null ? rootMessages.some((message: any) => message?.messageId === latestId) : true;
       if (!isLatestInRootMessages && latestMessage) {
-        setMessages([...(rootMessages || []), latestMessage]);
+        setMessages([...(rootMessages as any[]), latestMessage]);
       }
 
       const hasAdded = addedIndex && activeConvos[addedIndex] && addedConvo;
@@ -45,9 +61,11 @@ export default function useSubmitMessage() {
       const overrideUserMessageId = hasAdded ? v4() : undefined;
       const rootIndex = addedIndex - 1;
       const clientTimestamp = new Date().toISOString();
+      // Ensure text in form stays in sync after debounce guard
+      methods.setValue('text', normalizedText, { shouldValidate: true, shouldDirty: true });
 
       ask({
-        text: data.text,
+        text: normalizedText,
         overrideConvoId: appendIndex(rootIndex, overrideConvoId),
         overrideUserMessageId: appendIndex(rootIndex, overrideUserMessageId),
         clientTimestamp,
@@ -56,7 +74,7 @@ export default function useSubmitMessage() {
       if (hasAdded) {
         askAdditional(
           {
-            text: data.text,
+            text: normalizedText,
             overrideConvoId: appendIndex(addedIndex, overrideConvoId),
             overrideUserMessageId: appendIndex(addedIndex, overrideUserMessageId),
             clientTimestamp,

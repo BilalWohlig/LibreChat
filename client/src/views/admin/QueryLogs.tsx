@@ -199,8 +199,25 @@ export function useQueryLogs(limit: number = 10, page: number = 1, search: strin
 const QueryLogs: React.FC = () => {
   const navigate = useNavigate();
   const handleGoBack = () => {
-    const previousPage = sessionStorage.getItem('previousPage') || '/c/new';
-    navigate(previousPage);
+    const previousPage = sessionStorage.getItem('previousPage');
+    if (previousPage) {
+      navigate(previousPage);
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem('LAST_CONVO_SETUP_0');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const convoId = parsed?.conversationId;
+        if (convoId && convoId !== 'new') {
+          navigate(`/c/${convoId}`);
+          return;
+        }
+      }
+    } catch (_) {}
+
+    navigate('/c/new');
   };
   const mainContainerRef = useRef<HTMLDivElement>(null);
 
@@ -365,6 +382,7 @@ const QueryLogs: React.FC = () => {
             variant="ghost"
             size="icon"
             onClick={handleGoBack}
+            // onClick={() => (window.location.href = '/c/new')}
             className="rounded-full hover:bg-surface-secondary"
             aria-label="Back to Admin Dashboard"
           >

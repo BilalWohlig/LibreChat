@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { Constants, EModelEndpoint } from 'librechat-data-provider';
+import { Constants, EModelEndpoint, LocalStorageKeys } from 'librechat-data-provider';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
 import type { TPreset } from 'librechat-data-provider';
 import { useGetConvoIdQuery, useGetStartupConfig, useGetEndpointsQuery } from '~/data-provider';
@@ -29,8 +29,9 @@ export default function ChatRoute() {
 
   const index = 0;
   const { conversationId = '' } = useParams();
+  const processedConversationId = useRef<string>('');
   useIdChangeEffect(conversationId);
-  const { hasSetConversation, conversation } = store.useCreateConversationAtom(index);
+  const { hasSetConversation, conversation, setConversation } = store.useCreateConversationAtom(index);
   const { newConversation } = useNewConvo();
 
   const modelsQuery = useGetModelsQuery({
@@ -58,10 +59,49 @@ export default function ChatRoute() {
    *  Adjusting this may have unintended consequences on the conversation state.
    */
   useEffect(() => {
+    // Prevent processing the same conversationId multiple times
+    if (processedConversationId.current === conversationId) {
+      return;
+    }
+    
+    // Check if we have a stored conversation in localStorage that should be restored
+    const storedConversationKey = `${LocalStorageKeys.LAST_CONVO_SETUP}_0`;
+    const storedConversation = localStorage.getItem(storedConversationKey);
+    
     const shouldSetConvo =
       (startupConfig && !hasSetConversation.current && !modelsQuery.data?.initial) ?? false;
     /* Early exit if startupConfig is not loaded and conversation is already set and only initial models have loaded */
     if (!shouldSetConvo) {
+      return;
+    }
+    
+    // Mark this conversationId as processed
+    processedConversationId.current = conversationId;
+
+    // If we have a stored conversation and it matches the current conversationId, restore it
+    if (storedConversation && conversationId !== Constants.NEW_CONVO) {
+      try {
+        const parsedConversation = JSON.parse(storedConversation);
+        if (parsedConversation.conversationId === conversationId) {
+          logger.log('conversation', 'ChatRoute: Restoring conversation from localStorage', parsedConversation);
+          // Only restore if we don't already have a conversation set
+          if (!conversation || conversation.conversationId !== conversationId) {
+            setConversation(parsedConversation);
+          }
+          hasSetConversation.current = true;
+          return;
+        }
+      } catch (error) {
+        console.error('Error parsing stored conversation:', error);
+      }
+    }
+
+    // Prevent conversation recreation if we're navigating back from admin pages
+    // Check if we have an existing conversation state that should be preserved
+    const isNavigationBack = conversation && conversation.conversationId && conversation.conversationId !== Constants.NEW_CONVO;
+    if (isNavigationBack) {
+      logger.log('conversation', 'ChatRoute: Preserving existing conversation during navigation', conversation);
+      hasSetConversation.current = true;
       return;
     }
 
@@ -83,6 +123,7 @@ export default function ChatRoute() {
         preset: initialConvoQuery.data as TPreset,
         modelsData: modelsQuery.data,
         keepLatestMessage: true,
+        keepAddedConvos: true,
       });
       hasSetConversation.current = true;
     } else if (
@@ -96,6 +137,7 @@ export default function ChatRoute() {
         modelsData: modelsQuery.data,
         template: conversation ? conversation : undefined,
         ...(spec ? { preset: getModelSpecPreset(spec) } : {}),
+        keepAddedConvos: true,
       });
       hasSetConversation.current = true;
     } else if (
@@ -108,6 +150,7 @@ export default function ChatRoute() {
         preset: initialConvoQuery.data as TPreset,
         modelsData: modelsQuery.data,
         keepLatestMessage: true,
+        keepAddedConvos: true,
       });
       hasSetConversation.current = true;
     }
@@ -120,6 +163,7 @@ export default function ChatRoute() {
     modelsQuery.data,
     assistantListMap,
   ]);
+
 
   if (endpointsQuery.isLoading || modelsQuery.isLoading) {
     return (
