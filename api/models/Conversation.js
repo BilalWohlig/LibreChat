@@ -151,9 +151,15 @@ module.exports = {
   },
   getConvosByCursor: async (
     user,
-    { cursor, limit = 25, isArchived = false, tags, search, order = 'desc' } = {},
+    { cursor, limit = 25, isArchived = false, tags, search, order = 'desc', includeDeleted = false } = {},
   ) => {
     const filters = [{ user }];
+    
+    // Only include non-deleted conversations by default
+    if (!includeDeleted) {
+      filters.push({ deleted: { $ne: true } });
+    }
+    
     if (isArchived) {
       filters.push({ isArchived: true });
     } else {
@@ -191,7 +197,7 @@ module.exports = {
     try {
       const convos = await Conversation.find(query)
         .select(
-          'conversationId endpoint title createdAt updatedAt user model agent_id assistant_id spec iconURL',
+          'conversationId endpoint title createdAt updatedAt user model agent_id assistant_id spec iconURL deleted deletedAt',
         )
         .sort({ updatedAt: order === 'asc' ? 1 : -1 })
         .limit(limit + 1)
@@ -293,15 +299,19 @@ module.exports = {
         throw new Error('Conversation not found or already deleted.');
       }
 
-      const deleteConvoResult = await Conversation.deleteMany(userFilter);
+      // Instead of deleting, mark as deleted
+      const updateResult = await Conversation.updateMany(
+        userFilter,
+        { $set: { deleted: true, deletedAt: new Date() } },
+        { new: true }
+      );
 
-      const deleteMessagesResult = await deleteMessages({
-        conversationId: { $in: conversationIds },
-      });
-
-      return { ...deleteConvoResult, messages: deleteMessagesResult };
+      // We don't delete messages anymore as we're doing a soft delete
+      // But if you want to mark messages as deleted as well, you can add that here
+      
+      return { ...updateResult, messages: { n: 0, ok: 1, deletedCount: 0 } };
     } catch (error) {
-      logger.error('[deleteConvos] Error deleting conversations and messages', error);
+      logger.error('[deleteConvos] Error soft deleting conversations', error);
       throw error;
     }
   },
