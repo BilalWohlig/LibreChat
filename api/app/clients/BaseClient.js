@@ -1023,74 +1023,23 @@ class BaseClient {
    * @param {Object} message
    */
   getTokenCountForMessage(message) {
-    // Note: gpt-3.5-turbo and gpt-4 may update over time. Use default for these as well as for unknown models
-    let tokensPerMessage = 3;
-    let tokensPerName = 1;
-    const model = this.modelOptions?.model ?? this.model;
-
-    if (model === 'gpt-3.5-turbo-0301') {
-      tokensPerMessage = 4;
-      tokensPerName = -1;
-    }
-
-    const processValue = (value) => {
-      if (Array.isArray(value)) {
-        for (let item of value) {
-          if (
-            !item ||
-            !item.type ||
-            item.type === ContentTypes.THINK ||
-            item.type === ContentTypes.ERROR ||
-            item.type === ContentTypes.IMAGE_URL
-          ) {
-            continue;
+    // Only process the content, ignore other message metadata
+    if (message.content) {
+      if (Array.isArray(message.content)) {
+        // Handle array content (like in chat messages)
+        return message.content.reduce((sum, part) => {
+          if (part && part.text) {
+            return sum + this.getTokenCount(part.text);
           }
-
-          if (item.type === ContentTypes.TOOL_CALL && item.tool_call != null) {
-            const toolName = item.tool_call?.name || '';
-            if (toolName != null && toolName && typeof toolName === 'string') {
-              numTokens += this.getTokenCount(toolName);
-            }
-
-            const args = item.tool_call?.args || '';
-            if (args != null && args && typeof args === 'string') {
-              numTokens += this.getTokenCount(args);
-            }
-
-            const output = item.tool_call?.output || '';
-            if (output != null && output && typeof output === 'string') {
-              numTokens += this.getTokenCount(output);
-            }
-            continue;
-          }
-
-          const nestedValue = item[item.type];
-
-          if (!nestedValue) {
-            continue;
-          }
-
-          processValue(nestedValue);
-        }
-      } else if (typeof value === 'string') {
-        numTokens += this.getTokenCount(value);
-      } else if (typeof value === 'number') {
-        numTokens += this.getTokenCount(value.toString());
-      } else if (typeof value === 'boolean') {
-        numTokens += this.getTokenCount(value.toString());
-      }
-    };
-
-    let numTokens = tokensPerMessage;
-    for (let [key, value] of Object.entries(message)) {
-      processValue(value);
-
-      if (key === 'name') {
-        numTokens += tokensPerName;
+          return sum;
+        }, 0);
+      } else if (typeof message.content === 'string') {
+        // Handle string content
+        return this.getTokenCount(message.content);
       }
     }
-    return numTokens;
-  }
+    return 0;
+  }  
 
   async sendPayload(payload, opts = {}) {
     if (opts && typeof opts === 'object') {
