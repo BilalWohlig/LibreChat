@@ -454,6 +454,7 @@ export const useDeleteConversationTagMutation = (
   });
 };
 
+// In client/src/data-provider/mutations.ts
 export const useDeleteConversationMutation = (
   options?: t.DeleteConversationOptions,
 ): UseMutationResult<
@@ -471,57 +472,20 @@ export const useDeleteConversationMutation = (
       onMutate: async () => {
         await queryClient.cancelQueries([QueryKeys.allConversations]);
         await queryClient.cancelQueries([QueryKeys.archivedConversations]);
-        // could store old state if needed for rollback
       },
       onError: () => {
-        // TODO: CHECK THIS, no-op; restore if needed
+        // Handle error
       },
       onSuccess: (data, vars, context) => {
         if (vars.conversationId) {
-          removeConvoFromAllQueries(queryClient, vars.conversationId);
+          // Instead of removing from cache, we'll invalidate the queries to refetch
+          queryClient.invalidateQueries([QueryKeys.allConversations]);
+          queryClient.invalidateQueries([QueryKeys.archivedConversations]);
+          queryClient.removeQueries({
+            queryKey: [QueryKeys.conversation, vars.conversationId],
+            exact: true,
+          });
         }
-
-        // Also remove from all archivedConversations caches
-        const archivedQueries = queryClient
-          .getQueryCache()
-          .findAll([QueryKeys.archivedConversations], { exact: false });
-
-        for (const query of archivedQueries) {
-          queryClient.setQueryData<InfiniteData<ConversationListResponse>>(
-            query.queryKey,
-            (oldData) => {
-              if (!oldData) {
-                return oldData;
-              }
-              return {
-                ...oldData,
-                pages: oldData.pages
-                  .map((page) => ({
-                    ...page,
-                    conversations: page.conversations.filter(
-                      (conv) => conv.conversationId !== vars.conversationId,
-                    ),
-                  }))
-                  .filter((page) => page.conversations.length > 0),
-              };
-            },
-          );
-        }
-
-        queryClient.removeQueries({
-          queryKey: [QueryKeys.conversation, vars.conversationId],
-          exact: true,
-        });
-
-        queryClient.invalidateQueries({
-          queryKey: [QueryKeys.allConversations],
-          refetchPage: (_, index) => index === 0,
-        });
-        queryClient.invalidateQueries({
-          queryKey: [QueryKeys.archivedConversations],
-          refetchPage: (_, index) => index === 0,
-        });
-
         options?.onSuccess?.(data, vars, context);
       },
     },

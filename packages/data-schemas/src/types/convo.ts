@@ -50,4 +50,6 @@ export interface IConversation extends Document {
   expiredAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
+  deleted?: boolean;
+  deletedAt?: Date;
 }

@@ -24,6 +24,7 @@ router.get('/', async (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 25;
   const cursor = req.query.cursor;
   const isArchived = isEnabled(req.query.isArchived);
+  const includeDeleted = isEnabled(req.query.includeDeleted) && req.user.role === 'ADMIN'; // Only admins can see deleted conversations
   const search = req.query.search ? decodeURIComponent(req.query.search) : undefined;
   const order = req.query.order || 'desc';
 
@@ -40,9 +41,11 @@ router.get('/', async (req, res) => {
       tags,
       search,
       order,
+      includeDeleted, // Pass the includeDeleted flag
     });
     res.status(200).json(result);
   } catch (error) {
+    logger.error('Error fetching conversations:', error);
     res.status(500).json({ error: 'Error fetching conversations' });
   }
 });
