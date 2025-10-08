@@ -35,8 +35,8 @@ fileConfig:
 # Interface configuration
 interface:
   privacyPolicy:
-    externalUrl: "https://emeritus-chatapp.confixa.com/privacy"
+    externalUrl: "https://emeritus.org/in/privacy-policy/"
     openNewTab: true
   termsOfService:
-    externalUrl: "https://emeritus-chatapp.confixa.com/terms"
+    externalUrl: "https://emeritus.org/in/terms-of-service/"
     openNewTab: true

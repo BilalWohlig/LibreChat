@@ -153,6 +153,13 @@ export function useQueryLogs(limit: number = 10, page: number = 1, search: strin
           if (data.event === 'error') {
             setError(data.message || 'Unknown error from server');
           }
+
+          // Handle warnings and info messages (don't show as errors)
+          if (data.event === 'warning' || data.event === 'info') {
+            console.info('[useQueryLogs] Server message:', data.message);
+            // Real-time updates disabled, but don't show error
+            return;
+          }
         } catch (e) {
           console.error('[useQueryLogs] Error parsing SSE data:', e, 'Raw:', event.data);
         }
@@ -160,7 +167,7 @@ export function useQueryLogs(limit: number = 10, page: number = 1, search: strin
 
       es.onerror = () => {
         console.error('[useQueryLogs] SSE connection error');
-        setError('Failed to maintain real-time logs connection.');
+        // Don't set error message - just close connection silently
         es.close();
         esRef.current = null;
         setConnected(false);

@@ -519,9 +519,13 @@ router.get('/conversations', async (req, res) => {
   let changeStream;
   let convoChangeStream;
 
-  try {
-    const { filter, userMatchExpr } = buildFilterFromQuery(req.query);
-    changeStream = Message.watch([{ $match: { operationType: 'insert', ...filter } }], { fullDocument: 'updateLookup' });
+  // Skip change streams if real-time is disabled
+  const disableRealtime = process.env.DISABLE_REALTIME_LOGS === 'true';
+
+  if (!disableRealtime) {
+    try {
+      const { filter, userMatchExpr } = buildFilterFromQuery(req.query);
+      changeStream = Message.watch([{ $match: { operationType: 'insert', ...filter } }], { fullDocument: 'updateLookup' });
 
     changeStream.on('change', async (change) => {
       if (change.operationType !== 'insert') return;
@@ -617,6 +621,11 @@ router.get('/conversations', async (req, res) => {
   } catch (err) {
     logger.warn('[logs/conversations] Change streams unavailable; running without real-time updates:', err?.message || err);
     res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates unavailable; showing historical conversations only' })}\n\n`);
+    res.flush();
+  }
+  } else {
+    logger.info('[logs/conversations] Real-time logs disabled by configuration');
+    res.write(`event: info\ndata: ${JSON.stringify({ message: 'Real-time updates disabled; showing historical conversations only' })}\n\n`);
     res.flush();
   }
 
@@ -720,8 +729,12 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
   const processedMessageIds = new Set();
   let changeStream;
 
-  try {
-    changeStream = Message.watch(
+  // Skip change streams if real-time is disabled
+  const disableRealtime = process.env.DISABLE_REALTIME_LOGS === 'true';
+
+  if (!disableRealtime) {
+    try {
+      changeStream = Message.watch(
       [
         {
           $match: {
@@ -756,6 +769,11 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
   } catch (err) {
     logger.warn('[logs/conversations/messages] Change streams unavailable; running without real-time updates:', err?.message || err);
     res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates unavailable; showing historical messages only' })}\n\n`);
+    res.flush();
+  }
+  } else {
+    logger.info('[logs/conversations/messages] Real-time logs disabled by configuration');
+    res.write(`event: info\ndata: ${JSON.stringify({ message: 'Real-time updates disabled; showing historical messages only' })}\n\n`);
     res.flush();
   }
 
