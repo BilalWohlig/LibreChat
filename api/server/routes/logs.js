@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const moment = require('moment'); // Ensure Moment.js is imported
+const moment = require('moment');
 const router = express.Router();
 const { requireJwtAuth, checkAdmin } = require('~/server/middleware');
 const queryLogger = require('~/server/services/QueryLogger');
@@ -257,14 +257,13 @@ router.get('/queries/export', async (req, res) => {
         model: 'User',
       })
       .select('user text model tokenCount createdAt toolCalls conversationId')
-      .sort({ createdAt: -1 }) // Sort newest first
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!messages || messages.length === 0) {
       return res.status(404).json({ message: 'No query logs found matching the criteria' });
     }
 
-    // Fetch conversation titles
     const conversationIds = [...new Set(messages.map((m) => m.conversationId))];
     const conversations = await Conversation.find({ conversationId: { $in: conversationIds } })
       .select('conversationId title')
@@ -311,7 +310,6 @@ router.get('/conversations/export', async (req, res) => {
   try {
     const { search } = req.query;
 
-    // Build search filter
     const filter = {};
     if (search) {
       filter.$or = [
@@ -319,7 +317,6 @@ router.get('/conversations/export', async (req, res) => {
       ];
     }
 
-    // Find matching users for name/email search
     if (search) {
       const matchingUsers = await User.find({
         $or: [
@@ -333,7 +330,6 @@ router.get('/conversations/export', async (req, res) => {
       }
     }
 
-    // Get all matching messages with required fields and populate user data
     const messages = await Message.find(filter)
       .populate({
         path: 'user',
@@ -341,14 +337,13 @@ router.get('/conversations/export', async (req, res) => {
         model: 'User'
       })
       .select('user text model tokenCount createdAt')
-      .sort({ createdAt: -1 }) // Sort newest first
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!messages || messages.length === 0) {
       return res.status(404).json({ message: 'No messages found matching the criteria' });
     }
 
-    // Format messages for CSV export
     const formattedLogs = messages.map((message) => {
       const user = message.user || {};
       const isAI = !!message.model;
@@ -366,10 +361,8 @@ router.get('/conversations/export', async (req, res) => {
       };
     });
 
-    // Generate CSV
     const csv = await exportQueryLogsToCSV(formattedLogs);
     
-    // Set headers for file download
     const date = new Date().toISOString().split('T')[0];
     const filename = `all-conversations-${date}.csv`;
     
@@ -378,7 +371,6 @@ router.get('/conversations/export', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Pragma', 'no-cache');
     
-    // Send the CSV file
     return res.send(csv);
   } catch (error) {
     logger.error('[logs/conversations/export] Error exporting conversation messages to CSV:', error);
@@ -416,7 +408,7 @@ router.get('/conversations/:conversationId/export', async (req, res) => {
         model: 'User',
       })
       .select('user text model tokenCount createdAt toolCalls')
-      .sort({ createdAt: -1 }) // Sort newest first
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!messages || messages.length === 0) {
@@ -526,17 +518,18 @@ router.get('/conversations', async (req, res) => {
     changeStream.on('change', async (change) => {
       if (change.operationType !== 'insert') return;
       const newMessage = change.fullDocument;
-      if (!newMessage?.conversationId || processedConversationIds.has(newMessage.conversationId)) return;
-      processedConversationIds.add(newMessage.conversationId);
+      if (!newMessage?.conversationId) return;
 
       try {
+        // Calculate updated token count for this conversation
         const [summary] = await Message.aggregate([
           { $match: { conversationId: newMessage.conversationId } },
           ...buildConversationsAggregation({}, userMatchExpr, { skip: 0, limitNum: 1 }).slice(1),
         ]);
 
         if (summary) {
-          if (userMatchExpr) {
+          // Check if conversation matches search filter
+          if (userMatchExpr && req.query.search) {
             const name = summary.user?.name || '';
             const email = summary.user?.email || '';
             const title = summary.title || '';
@@ -549,19 +542,36 @@ router.get('/conversations', async (req, res) => {
             }
           }
 
-          const conversationData = {
-            event: 'realtime_conversation',
-            type: 'conversation_summary',
+          // Emit token update event for existing conversations
+          const tokenUpdatePayload = {
+            event: 'conversation_update',
+            type: 'tokens',
             conversationId: summary.conversationId,
-            user: summary.user,
-            title: summary.title,
-            createdAt: summary.createdAt.toISOString(),
-            updatedAt: summary.updatedAt.toISOString(),
             totalTokens: summary.totalTokens,
             messageCount: summary.messageCount,
+            updatedAt: summary.updatedAt.toISOString(),
           };
-          res.write(`data: ${JSON.stringify(conversationData)}\n\n`);
+          res.write(`data: ${JSON.stringify(tokenUpdatePayload)}\n\n`);
           res.flush();
+
+          // For new conversations, also emit the full conversation summary
+          if (!processedConversationIds.has(newMessage.conversationId)) {
+            processedConversationIds.add(newMessage.conversationId);
+            
+            const conversationData = {
+              event: 'realtime_conversation',
+              type: 'conversation_summary',
+              conversationId: summary.conversationId,
+              user: summary.user,
+              title: summary.title,
+              createdAt: summary.createdAt.toISOString(),
+              updatedAt: summary.updatedAt.toISOString(),
+              totalTokens: summary.totalTokens,
+              messageCount: summary.messageCount,
+            };
+            res.write(`data: ${JSON.stringify(conversationData)}\n\n`);
+            res.flush();
+          }
         }
       } catch (error) {
         logger.error(`[logs/conversations] Error processing real-time conversation ${newMessage.conversationId}:`, error);

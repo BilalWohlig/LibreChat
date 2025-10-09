@@ -12,14 +12,14 @@ import moment from 'moment';
 import QueryLogDetailsDialog from './QueryLogDetailsDialog';
 
 interface QueryLog {
-  _id: string; // use conversationId
+  _id: string;
   conversationId: string;
   user: { name?: string; email?: string; id?: string };
   title?: string;
   totalTokens: number;
   messageCount: number;
-  createdAt: string; // first message time
-  updatedAt: string; // last message time
+  createdAt: string;
+  updatedAt: string;
 }
 
 function toConversationRow(data: any): QueryLog {
@@ -150,6 +150,16 @@ export function useQueryLogs(limit: number = 10, page: number = 1, search: strin
             } : p)));
           }
 
+          // NEW: Handle token updates in real-time
+          if (data.event === 'conversation_update' && data.type === 'tokens') {
+            setLogs((prev) => prev.map((p) => (p.conversationId === data.conversationId ? {
+              ...p,
+              totalTokens: data.totalTokens || p.totalTokens,
+              messageCount: data.messageCount || p.messageCount,
+              updatedAt: data.updatedAt || p.updatedAt,
+            } : p)));
+          }
+
           if (data.event === 'error') {
             setError(data.message || 'Unknown error from server');
           }
@@ -237,7 +247,6 @@ const QueryLogs: React.FC = () => {
     setPage(1);
   };
 
-  // Function to trigger CSV export for all conversations
   const handleExportAllConversations = async () => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -271,7 +280,6 @@ const QueryLogs: React.FC = () => {
     }    
   };
 
-  // Adjust container height
   useEffect(() => {
     const adjustTableHeight = () => {
       if (mainContainerRef.current) {
@@ -288,7 +296,6 @@ const QueryLogs: React.FC = () => {
     return () => window.removeEventListener('resize', adjustTableHeight);
   }, [logs, page]);
 
-  // Columns (added Title column for completeness)
   const columns = useMemo(
     () => [
       {
@@ -375,14 +382,12 @@ const QueryLogs: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col px-6 py-4 sm:py-6">
-      {/* Header */}
       <div className="mb-4 flex items-center justify-between border-b border-border-light pb-3">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
             onClick={handleGoBack}
-            // onClick={() => (window.location.href = '/c/new')}
             className="rounded-full hover:bg-surface-secondary"
             aria-label="Back to Admin Dashboard"
           >
@@ -404,7 +409,6 @@ const QueryLogs: React.FC = () => {
         </Button>
       </div>
 
-      {/* Error Messages */}
       {error && (
         <div className="mb-4 rounded-md border-l-4 border-red-500 bg-red-100 p-4 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
           {error}
@@ -416,7 +420,6 @@ const QueryLogs: React.FC = () => {
         </div>
       )}
 
-      {/* Search */}
       <div className="mb-4">
         <SearchBar
           search={search}
@@ -425,7 +428,6 @@ const QueryLogs: React.FC = () => {
         />
       </div>
 
-      {/* Loading Spinner */}
       {loading && (
         <div className="flex items-center justify-center py-6">
           <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500" />
@@ -433,7 +435,6 @@ const QueryLogs: React.FC = () => {
         </div>
       )}
 
-      {/* Empty State */}
       {!loading && logs.length === 0 && (
         <div className="flex flex-1 items-center justify-center text-center text-muted-foreground">
           <p className="text-base">
@@ -442,7 +443,6 @@ const QueryLogs: React.FC = () => {
         </div>
       )}
 
-      {/* Data Table */}
       {!loading && logs.length > 0 && (
         <div className="flex flex-1 flex-col gap-4">
           <div ref={mainContainerRef} className="min-h-[400px] flex-grow">
@@ -456,7 +456,6 @@ const QueryLogs: React.FC = () => {
             />
           </div>
 
-          {/* Pagination */}
           <Pagination
             page={page}
             limit={limit}
@@ -466,7 +465,6 @@ const QueryLogs: React.FC = () => {
         </div>
       )}
 
-      {/* Log Detail Dialog */}
       <QueryLogDetailsDialog dialogOpen={dialogOpen} setDialogOpen={setDialogOpen} selectedLog={selectedLog} />
     </div>
   );
