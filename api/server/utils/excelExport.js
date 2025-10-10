@@ -9,19 +9,19 @@ const moment = require('moment');
  */
 const exportLogsToCSV = (logs) => {
   try {
-    // Format the data for CSV with the required fields
-    const formattedData = logs.map(log => ({
-      'Timestamp': moment(log.timestamp).isValid()
-      ? moment(log.timestamp).format('Do MMMM YY, h:mm:ss a')
-      : moment().format('Do MMMM YY, h:mm:ss a'),
+    // Sort logs by timestamp descending
+    const sortedLogs = logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
+    const formattedData = sortedLogs.map(log => ({
+      'Timestamp': moment(log.timestamp).isValid()
+        ? moment(log.timestamp).format('Do MMMM YY, h:mm:ss a')
+        : moment().format('Do MMMM YY, h:mm:ss a'),
       'Event': log.action || 'N/A',
-      'Name': log.userInfo?.name || 'N/A',
-      'Email': log.userInfo?.email || log.userInfo?.username || 'N/A',
+      'Name': log.userInfo?.name || '',
+      'Email': log.userInfo?.email || log.userInfo?.username || '',
       'Details': log.details?.message || log.details?.error || JSON.stringify(log.details || {})
     }));
 
-    // Convert to CSV with proper formatting
     const csv = stringify(formattedData, {
       header: true,
       quoted: true,
@@ -44,19 +44,28 @@ const exportLogsToCSV = (logs) => {
  */
 const exportQueryLogsToCSV = (queryLogs) => {
   try {
-    // Format the data for CSV with the required fields
-    const formattedData = queryLogs.map(log => ({
-      'Name': log.user?.name || 'N/A',
-      'Email': log.user?.email || 'N/A',
-      'Timestamp': log.createdAt || new Date().toISOString(),
-      'Type': log.role === 'assistant' ? 'Response' : 'Query',
-      'Model': log.model || 'N/A',
-      'Content': log.text || '',
-      'Token Count': log.tokenCount || 0,
-      'Role': log.role || 'N/A'
-    }));
+    // Sort logs by createdAt descending
+    const sortedLogs = queryLogs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    // Convert to CSV with proper formatting
+    const formattedData = sortedLogs.map(log => {
+      const user = log.user || {};
+      const name = log.userName || user.name || '';
+      const email = log.userEmail || user.email || user.username || '';
+
+      return {
+        'Name': name,
+        'Email': email,
+        'Timestamp': moment(log.createdAt).isValid()
+          ? moment(log.createdAt).format('Do MMMM YY, h:mm:ss a')
+          : moment().format('Do MMMM YY, h:mm:ss a'),
+        'Type': log.role === 'assistant' ? 'Response' : 'Query',
+        'Model': log.model || '',
+        'Content': log.text || '',
+        'Token Count': log.tokenCount || 0,
+        'Role': log.role || ''
+      };
+    });
+
     const csv = stringify(formattedData, {
       header: true,
       quoted: true,
