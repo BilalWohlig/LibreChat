@@ -20,7 +20,7 @@ export default function AdminPanel() {
         {/* Users Button */}
         <Button
           type="button"
-          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-black ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => handleNavigation('/admin')}
         >
           <Users className="h-5 w-5" />
@@ -30,7 +30,7 @@ export default function AdminPanel() {
         {/* Logs Button */}
         <Button
           type="button"
-          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-black ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => handleNavigation('/admin/logs')}
         >
           <FileText className="h-5 w-5" />
@@ -40,7 +40,7 @@ export default function AdminPanel() {
         {/* Query Logs Button */}
         <Button
           type="button"
-          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-black ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => handleNavigation('/admin/query-logs')}
         >
           <FileText className="h-5 w-5" />

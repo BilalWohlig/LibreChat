@@ -114,7 +114,7 @@ export default function AdminDashboard() {
         header: 'No.',
         meta: { size: '60px' },
         cell: ({ row }: any) => (
-          <span className="text-xs font-medium text-gray-500">
+          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
             {(page - 1) * limit + row.index + 1}
           </span>
         ),
@@ -122,13 +122,21 @@ export default function AdminDashboard() {
       {
         accessorKey: 'email',
         header: 'Email',
-        cell: ({ row }: any) => row.original.email ?? '—',
+        cell: ({ row }: any) => (
+          <span className="text-sm text-gray-900 dark:text-gray-100">
+            {row.original.email ?? '—'}
+          </span>
+        ),
         meta: { size: '220px' },
       },
       {
         accessorKey: 'name',
         header: 'Name',
-        cell: ({ row }: any) => row.original.name ?? '—',
+        cell: ({ row }: any) => (
+          <span className="text-sm text-gray-900 dark:text-gray-100">
+            {row.original.name ?? '—'}
+          </span>
+        ),
         meta: { size: '180px' },
       },
       {
@@ -175,7 +183,7 @@ export default function AdminDashboard() {
         header: 'Created',
         meta: { size: '150px' },
         cell: ({ row }: any) => (
-          <span className="text-xs">
+          <span className="text-xs text-gray-900 dark:text-gray-100">
             {row.original.createdAt ? new Date(row.original.createdAt).toLocaleDateString() : '—'}
           </span>
         ),
@@ -206,7 +214,7 @@ export default function AdminDashboard() {
   return (
     <div className="flex h-full flex-col gap-4 p-4">
       {/* Header */}
-      <div className="mb-3 flex items-center justify-between border-b border-gray-200 pb-3">
+      <div className="mb-3 flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
@@ -217,7 +225,7 @@ export default function AdminDashboard() {
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h2 className="text-xl font-semibold">User Management</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">User Management</h2>
         </div>
       </div>
 

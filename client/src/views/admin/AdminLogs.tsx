@@ -203,7 +203,7 @@ export default function AdminLogs() {
         header: 'No.',
         meta: { size: '45px' },
         cell: ({ row }) => (
-          <span className="text-xs font-medium text-gray-500">
+          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
             {(currentPage - 1) * itemsPerPage + row.index + 1}
           </span>
         ),
@@ -211,13 +211,21 @@ export default function AdminLogs() {
       {
         accessorKey: 'name',
         header: 'Name',
-        cell: ({ row }) => row.original.name ?? '—',
+        cell: ({ row }) => (
+          <span className="text-sm text-gray-900 dark:text-gray-100">
+            {row.original.name ?? '—'}
+          </span>
+        ),
         meta: { size: '180px' },
       },
       {
         accessorKey: 'email',
         header: 'Email',
-        cell: ({ row }) => row.original.email ?? '—',
+        cell: ({ row }) => (
+          <span className="text-sm text-gray-900 dark:text-gray-100">
+            {row.original.email ?? '—'}
+          </span>
+        ),
         meta: { size: '220px' },
       },
       {
@@ -225,7 +233,7 @@ export default function AdminLogs() {
         header: 'Time',
         meta: { size: '150px' },
         cell: ({ row }) => (
-          <span className="text-xs">
+          <span className="text-xs text-gray-900 dark:text-gray-100">
             {moment(row.original.timestamp).format('Do MMM YYYY, h:mm a')}
           </span>
         ),
@@ -240,11 +248,11 @@ export default function AdminLogs() {
             <span
               className={cn(
                 'rounded px-2 py-0.5 text-xs font-medium',
-                action === 'LOGIN' ? 'bg-green-100 text-green-700' :
-                action === 'LOGOUT' ? 'bg-red-100 text-red-700' :
-                action === 'MODEL CHANGED' ? 'bg-blue-100 text-blue-700' :
-                action === 'ATTACHED FILE' ? 'bg-gray-100 text-gray-700' :
-                'bg-slate-100 text-slate-700'
+                action === 'LOGIN' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+                action === 'LOGOUT' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' :
+                action === 'MODEL CHANGED' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
+                action === 'ATTACHED FILE' ? 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' :
+                'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
               )}
             >
               {action}
@@ -262,9 +270,9 @@ export default function AdminLogs() {
             <span
               className={cn(
                 'rounded px-2 py-0.5 text-xs font-medium',
-                s === 'Active' ? 'bg-emerald-100 text-emerald-700' :
-                s === 'Inactive' ? 'bg-zinc-100 text-zinc-700' :
-                'bg-yellow-100 text-yellow-700'
+                s === 'Active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' :
+                s === 'Inactive' ? 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300' :
+                'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
               )}
             >
               {s}
@@ -284,7 +292,7 @@ export default function AdminLogs() {
               onClick={() => setSelected(row.original)}
               className="h-8 w-8 rounded-full"
             >
-              <Info className="h-4 w-4 text-gray-600" />
+              <Info className="h-4 w-4 text-gray-600 dark:text-gray-300" />
             </Button>
           </div>
         ),
@@ -296,7 +304,7 @@ export default function AdminLogs() {
   return (
     <div className="flex h-full flex-col gap-4 p-4">
       {/* Header */}
-      <div className="mb-3 flex items-center justify-between border-b border-gray-200 pb-3">
+      <div className="mb-3 flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
@@ -307,7 +315,7 @@ export default function AdminLogs() {
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-xl font-semibold">System Logs</h1>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">System Logs</h1>
         </div>
         <Button
           variant="outline"
@@ -334,7 +342,7 @@ export default function AdminLogs() {
           inputRef={searchInputRef}
         />
         <select
-          className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+          className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
           value={searchCategory === 'action' ? search : ''}
           onChange={(e) => {
             if (e.target.value === '') {
@@ -358,7 +366,7 @@ export default function AdminLogs() {
 
       {/* Error State */}
       {error && (
-        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700">
+        <div className="flex items-center justify-between rounded bg-red-100 dark:bg-red-900 p-2 text-red-700 dark:text-red-300">
           <span>{error}</span>
           <Button variant="outline" onClick={refetchLogs}>
             Retry
@@ -373,7 +381,7 @@ export default function AdminLogs() {
             <svg className="animate-spin h-5 w-5 text-gray-500" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
             </svg>
-            <p className="ml-2 text-gray-500">Loading...</p>
+            <p className="ml-2 text-gray-500 dark:text-gray-400">Loading...</p>
           </div>
         )}
         <div ref={scrollContainerRef} className="h-full overflow-auto">
@@ -389,7 +397,7 @@ export default function AdminLogs() {
       </div>
       {rows.length === 0 && !loading && (
         <div className="flex h-40 w-full items-center justify-center">
-          <p className="text-gray-500">No matching logs found</p>
+          <p className="text-gray-500 dark:text-gray-400">No matching logs found</p>
         </div>
       )}
 

@@ -161,7 +161,7 @@ const QueryLogs: React.FC = () => {
         header: 'No.',
         meta: { size: '60px' },
         cell: ({ row }: any) => (
-          <span className="text-xs font-medium text-gray-500">
+          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
             {(page - 1) * limit + row.index + 1}
           </span>
         ),
@@ -171,7 +171,7 @@ const QueryLogs: React.FC = () => {
         header: 'Name',
         meta: { size: '150px' },
         cell: ({ row }: any) => (
-          <span className="text-sm font-medium text-gray-800">
+          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
             {row.original.user?.name ?? 'Unknown'}
           </span>
         ),
@@ -181,7 +181,7 @@ const QueryLogs: React.FC = () => {
         header: 'Email',
         meta: { size: '200px' },
         cell: ({ row }: any) => (
-          <span className="text-xs text-gray-600">{row.original.user?.email ?? 'N/A'}</span>
+          <span className="text-xs text-gray-600 dark:text-gray-300">{row.original.user?.email ?? 'N/A'}</span>
         ),
       },
       {
@@ -189,7 +189,7 @@ const QueryLogs: React.FC = () => {
         header: 'Title',
         meta: { size: '250px' },
         cell: ({ row }: any) => (
-          <span className="block truncate text-sm text-gray-800" title={row.original.title}>
+          <span className="block truncate text-sm text-gray-800 dark:text-gray-200" title={row.original.title}>
             {row.original.title ?? 'New Chat'}
           </span>
         ),
@@ -199,7 +199,7 @@ const QueryLogs: React.FC = () => {
         header: 'Last Updated',
         meta: { size: '160px' },
         cell: ({ row }: any) => (
-          <span className="text-xs text-gray-500 whitespace-nowrap">
+          <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
             {moment(row.original.updatedAt).format('Do MMM YY, h:mm a')}
           </span>
         ),
@@ -209,7 +209,7 @@ const QueryLogs: React.FC = () => {
         header: 'Tokens',
         meta: { size: '100px' },
         cell: ({ row }: any) => (
-          <span className="text-xs font-medium text-gray-600">
+          <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
             {row.original.totalTokens.toLocaleString()}
           </span>
         ),
@@ -239,12 +239,12 @@ const QueryLogs: React.FC = () => {
   return (
     <div className="flex h-full flex-col gap-4 p-4">
       {/* Header */}
-      <div className="mb-3 flex items-center justify-between border-b border-gray-200 pb-3">
+      <div className="mb-3 flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={handleGoBack} className="rounded-full">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-xl font-semibold">Query Logs</h1>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Query Logs</h1>
         </div>
         <Button
           variant="outline"
@@ -271,7 +271,7 @@ const QueryLogs: React.FC = () => {
       
       {/* Error Messages */}
       {error && (
-        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700">
+        <div className="flex items-center justify-between rounded bg-red-100 dark:bg-red-900 p-2 text-red-700 dark:text-red-300">
           <span>{error}</span>
           <Button variant="outline" size="sm" onClick={refetch}>
             Retry
@@ -280,7 +280,7 @@ const QueryLogs: React.FC = () => {
       )}
       
       {exportError && (
-        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700">
+        <div className="flex items-center justify-between rounded bg-red-100 dark:bg-red-900 p-2 text-red-700 dark:text-red-300">
           <span>{exportError}</span>
           <Button variant="outline" size="sm" onClick={() => setExportError(null)}>
             Dismiss
@@ -295,7 +295,7 @@ const QueryLogs: React.FC = () => {
             <svg className="animate-spin h-5 w-5 text-gray-500" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
             </svg>
-            <p className="ml-2 text-gray-500">Loading...</p>
+            <p className="ml-2 text-gray-500 dark:text-gray-400">Loading...</p>
           </div>
         )}
         {/* DataTable is always rendered but hidden behind loading overlay */}
@@ -314,7 +314,7 @@ const QueryLogs: React.FC = () => {
       {/* Empty State - Only show when NOT loading */}
       {logs.length === 0 && !loading && (
         <div className="flex h-40 w-full items-center justify-center">
-          <p className="text-gray-500">
+          <p className="text-gray-500 dark:text-gray-400">
             {debouncedSearch ? 'No logs match your search.' : 'No query logs available.'}
           </p>
         </div>

@@ -177,6 +177,86 @@ const detectMessageType = (text: string): MessageType => {
   }
 };
 
+// Helper to render text with both code blocks and citations
+const renderMessageWithCode = (text: string, attachments: any[]) => {
+  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+  const segments: { type: 'text' | 'code'; content: string; language?: string }[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    // Add text before code block
+    if (match.index > lastIndex) {
+      segments.push({
+        type: 'text',
+        content: text.slice(lastIndex, match.index),
+      });
+    }
+    // Add code block
+    segments.push({
+      type: 'code',
+      language: match[1] || 'text',
+      content: match[2],
+    });
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    segments.push({
+      type: 'text',
+      content: text.slice(lastIndex),
+    });
+  }
+
+  // If no code blocks found, treat entire text as text
+  if (segments.length === 0) {
+    segments.push({
+      type: 'text',
+      content: text,
+    });
+  }
+
+  return segments.map((segment, idx) => {
+    if (segment.type === 'code') {
+      const handleCopy = () => {
+        navigator.clipboard.writeText(segment.content);
+        // Optional: Show a toast or temporary feedback
+      };
+      
+      return (
+        <div key={idx} className="relative bg-black rounded-md p-3 my-2 overflow-x-auto group">
+          <button
+            onClick={handleCopy}
+            className="absolute top-2 right-2 px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Copy code"
+          >
+            Copy
+          </button>
+          <pre className="m-0">
+            <code className="text-white font-mono" style={{ color: '#ffffff', fontWeight: 400, opacity: 1 }}>
+              {segment.content}
+            </code>
+          </pre>
+        </div>
+      );
+    } else {
+      // Original citation logic for text segments
+      const processedHtml = parseCitations(segment.content, attachments)
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br/>')
+        .replace(/^(.+)$/, '<p>$1</p>');
+      
+      return (
+        <div
+          key={idx}
+          dangerouslySetInnerHTML={{ __html: processedHtml }}
+        />
+      );
+    }
+  });
+};
+
 const QueryLogDetailsDialog: React.FC<QueryLogDetailsDialogProps> = ({
   dialogOpen,
   setDialogOpen,
@@ -413,15 +493,9 @@ const QueryLogDetailsDialog: React.FC<QueryLogDetailsDialogProps> = ({
                                   : ''}
                               </div>
                             </div>
-                            <div 
-                              className="prose prose-sm max-w-none break-words dark:prose-invert"
-                              dangerouslySetInnerHTML={{ 
-                                __html: parseCitations(h.text || '', h.attachments || [])
-                                  .replace(/\n\n/g, '</p><p>')
-                                  .replace(/\n/g, '<br/>')
-                                  .replace(/^(.+)$/, '<p>$1</p>')
-                              }}
-                            />
+                            <div className="prose prose-sm max-w-none break-words dark:prose-invert">
+                              {renderMessageWithCode(h.text || '', h.attachments || [])}
+                            </div>
                             {h.toolType === 'web_search' && h.searchQuery && (
                               <div className="text-xs text-muted-foreground mt-1">
                                 Search Query: {h.searchQuery}
