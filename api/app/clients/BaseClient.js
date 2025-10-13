@@ -678,7 +678,13 @@ class BaseClient {
       (this.clientName === EModelEndpoint.agents ||
         isParamEndpoint(this.options.endpoint, this.options.endpointType))
     ) {
-      responseMessage.text = '';
+      const textContent = completion
+      .filter(part =>part.type === ContentTypes.Text || part.type === 'text')
+      .map(part => part.text || part[ContentTypes.TEXT]|| '')
+      .join('\n')
+      .trim();
+  
+      responseMessage.text = textContent;
       responseMessage.content = completion;
     } else if (Array.isArray(completion)) {
       responseMessage.text = addSpaceIfNeeded(generation) + completion.join('');

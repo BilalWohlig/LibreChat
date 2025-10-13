@@ -218,6 +218,7 @@ async function buildLogData(message, eventType = 'log') {
     createdAt: message.createdAt.toISOString(),
     toolType: message.toolCalls?.[0]?.type || null,
     searchQuery: message.toolCalls?.find(t => t.type === 'web_search')?.query || null,
+    attachments : message.attachments || null,
   };
 }
 
@@ -284,7 +285,7 @@ router.get('/queries/export', async (req, res) => {
       model: message.model || '',
       text: message.text || '',
       tokenCount: message.tokenCount || 0,
-      createdAt: moment(message.createdAt).format('Do MMMM YYYY, h:mm:ss a'),
+      createdAt: message.createdAt,
       userName: message.user?.name || '',
       userEmail: message.user?.email || '',
       toolType: message.toolCalls?.[0]?.type || null,
@@ -354,7 +355,7 @@ router.get('/conversations/export', async (req, res) => {
         model: message.model || '',
         text: message.text || '',
         tokenCount: message.tokenCount || 0,
-        createdAt: moment(message.createdAt).format('Do MMMM YYYY, h:mm:ss a'),
+        createdAt: message.createdAt,
         userName: user.name || '',
         userEmail: user.email || '',
         toolType: message.toolCalls?.[0]?.type || null,
@@ -421,7 +422,7 @@ router.get('/conversations/:conversationId/export', async (req, res) => {
       model: message.model || '',
       text: message.text || '',
       tokenCount: message.tokenCount || 0,
-      createdAt: moment(message.createdAt).format('Do MMM YYYY, h:mm:ss a'),
+      createdAt: message.createdAt,
       userName: message.user?.name || '',
       userEmail: message.user?.email || '',
       toolType: message.toolCalls?.[0]?.type || null,
@@ -639,7 +640,7 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
 
   try {
     const messages = await Message.find({ conversationId })
-      .select('messageId conversationId user model text tokenCount createdAt toolCalls')
+      .select('messageId conversationId user model text tokenCount createdAt toolCalls attachments')
       .sort({ createdAt: 1 })
       .lean();
 
