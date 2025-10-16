@@ -48,6 +48,7 @@ export default function useSSE(
 ) {
   const genTitle = useGenTitleMutation();
   const setActiveRunId = useSetRecoilState(store.activeRunFamily(runIndex));
+  const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
 
   const { token, isAuthenticated } = useAuthContext();
   const [completed, setCompleted] = useState(new Set());
@@ -146,13 +147,72 @@ export default function useSSE(
     // Prevent duplicate SSE streams for the same response/message id
     const sseKey = `sse_${submission.initialResponse?.messageId || submission.userMessage?.messageId || ''}`;
     if (sseKey && localStorage.getItem(sseKey) === 'open') {
+      console.log('SSE: Stream already open for this message');
       return;
+    }
+
+    // CRITICAL CHECK: Verify response doesn't already exist
+    // This prevents regeneration when returning from admin pages after completion
+    const currentMessages = getMessages();
+    if (currentMessages && currentMessages.length > 0) {
+      const responseId = submission.initialResponse?.messageId;
+      const userMsgId = userMessage.messageId;
+      
+      // Check if this message was already completed (in the completed Set)
+      if (responseId && completed.has(responseId)) {
+        console.log('SSE: Message already in completed set, clearing submission to prevent regeneration', {
+          responseId,
+          userMsgId,
+          conversationId: submission.conversation?.conversationId,
+        });
+        setSubmission(null);
+        setIsSubmitting(false);
+        return;
+      }
+      
+      // Check if a COMPLETED response already exists for this user message
+      const responseExists = currentMessages.some((msg) => {
+        // Skip if this is the current user message
+        if (msg.messageId === userMsgId) return false;
+        
+        // Skip placeholder responses (messageId ends with underscore and no real content)
+        const isPlaceholder = msg.messageId?.endsWith('_') && (!msg.text || msg.text.length === 0);
+        if (isPlaceholder) return false;
+        
+        // Check if this is a completed response to our user message
+        if (msg.parentMessageId === userMsgId && !msg.isCreatedByUser) {
+          // Only count as existing if it has actual content AND is not marked as unfinished
+          const hasContent = msg.text && msg.text.length > 0;
+          const isFinished = !msg.unfinished;
+          return hasContent && isFinished;
+        }
+        
+        return false;
+      });
+      
+      if (responseExists) {
+        console.log('SSE: Completed response already exists, clearing submission to prevent regeneration', {
+          responseId,
+          userMsgId,
+          conversationId: submission.conversation?.conversationId,
+        });
+        // Clear submission from Recoil to prevent retrigger
+        setSubmission(null);
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     const sse = new SSE(payloadData.server, {
       payload: JSON.stringify(payload),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
+
+    // Store metadata on SSE instance for tracking
+    (sse as any)._submissionMeta = {
+      userMessageId: userMessage.messageId,
+      conversationId: submission.conversation?.conversationId,
+    };
 
     // Store the SSE instance so the explicit stop effect can access it
     setActiveSSE(sse);
@@ -172,11 +232,23 @@ export default function useSSE(
       const data = JSON.parse(e.data);
 
       if (data.final != null) {
+        // Clear localStorage flags FIRST before any handlers
+        // This ensures cleanup happens even if finalHandler early-returns
+        localStorage.removeItem(submissionKey);
+        localStorage.removeItem(sseKey);
+        console.log('SSE: Final message received, cleared flags', { submissionKey, sseKey });
+        
+        // Clear submission tracking info on SSE instance
+        (sse as any)._submissionMeta = null;
+
         clearDraft(submission.conversation?.conversationId);
         const { plugins } = data;
         finalHandler(data, { ...submission, plugins } as EventSubmission);
         (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
-        console.log('final', data);
+        
+        // CRITICAL FIX: Clear submission after final message to prevent retriggering on tab switch
+        setSubmission(null);
+        console.log('SSE: Cleared submission after final message to prevent retriggering');
         return;
       } else if (data.created != null) {
         const runId = v4();
@@ -282,6 +354,10 @@ export default function useSSE(
 
       console.log('error in server stream.');
       (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
+      
+      // Clear localStorage flags on error
+      localStorage.removeItem(submissionKey);
+      localStorage.removeItem(sseKey);
 
       let data: TResData | undefined = undefined;
       try {
@@ -302,20 +378,18 @@ export default function useSSE(
       // This cleanup handles navigation away - we don't want to abort the backend
       if (sse.readyState === 2) {
         // CLOSED state - connection already closed
+        // Flags are already cleared by final/error handlers
         return;
       }
 
-      // For navigation away, we keep the backend processing
-      // The explicit stop is handled by the separate effect above
+      // For navigation away while streaming, KEEP the localStorage flags
+      // This prevents duplicate connections when user returns
+      // The flags will be cleared when the stream completes or errors
       console.log(
-        'SSE cleanup called due to navigation - allowing background generation to continue',
+        'SSE cleanup: Navigation detected - keeping flags to prevent duplicate on return',
       );
       setActiveSSE(null);
-      // Clear the localStorage flag when SSE is cleaned up
-      localStorage.removeItem(submissionKey);
-      if (sseKey) {
-        localStorage.removeItem(sseKey);
-      }
+      // DO NOT clear localStorage flags here - let completion/error handlers do it
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submission]);

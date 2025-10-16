@@ -8,7 +8,7 @@ import { SearchBar } from '~/views/admin/AdminSearchBar';
 import { UserActions } from '~/views/admin/UserActions';
 import { UserUsageDialog } from '~/views/admin/UserUsageDialog';
 import { ArrowLeft } from 'lucide-react';
-import {Pagination} from '~/components/ui/Pagination';
+import { Pagination } from '~/components/ui/Pagination';
 
 type AdminUser = {
   _id: string;
@@ -32,14 +32,12 @@ export default function AdminDashboard() {
   const [usageOpen, setUsageOpen] = useState(false);
 
   const handleGoBack = () => {
-    // Prefer session-stored previous page set by AdminPanel
     const previousPage = sessionStorage.getItem('previousPage');
     if (previousPage) {
       navigate(previousPage);
       return;
     }
 
-    // Try to restore last active conversation from localStorage
     try {
       const raw = localStorage.getItem('LAST_CONVO_SETUP_0');
       if (raw) {
@@ -52,11 +50,10 @@ export default function AdminDashboard() {
       }
     } catch (_) {}
 
-    // Fallback
     navigate('/c/new');
   };
 
-  // --- Fetch Users ---
+  // Fetch Users
   const usersQuery = useQuery({
     queryKey: [QueryKeys.roles, 'admin', 'users', { page, limit, search }],
     queryFn: async () => {
@@ -74,7 +71,7 @@ export default function AdminDashboard() {
     },
   });
 
-  // --- Mutations ---
+  // Mutations
   const updateRoleMutation = useMutation({
     mutationFn: async ({ id, nextRole }: { id: string; nextRole: string }) =>
       await request.put(`/api/admin/users/${id}/role`, { role: nextRole }),
@@ -89,24 +86,26 @@ export default function AdminDashboard() {
   const data = ((usersQuery.data as any)?.users ?? []) as AdminUser[];
   const total = (usersQuery.data as any)?.total ?? 0;
 
-  // Adjust container height when data changes
+  // Adjust table height
   useEffect(() => {
-    const adjustTableHeight = () => {
-      if (mainContainerRef.current) {
-        const windowHeight = window.innerHeight;
-        const containerTop = mainContainerRef.current.getBoundingClientRect().top;
-        const paginationHeight = 60;
-        const headerHeight = 60;
-        const availableHeight = windowHeight - containerTop - paginationHeight - headerHeight;
-        mainContainerRef.current.style.height = `${Math.max(400, availableHeight)}px`;
-      }
-    };
-    setTimeout(adjustTableHeight, 100);
-    window.addEventListener('resize', adjustTableHeight);
-    return () => window.removeEventListener('resize', adjustTableHeight);
-  }, [data, page]);
+  const adjustTableHeight = () => {
+    if (mainContainerRef.current) {
+      const rowHeight = 48; // same as CSS row height
+      const headerHeight = 48; // optional table header height, adjust if needed
+      const totalRows = limit; // 10 records per page
+      const paginationHeight = 60; // height of pagination component
+      const containerHeight = rowHeight * totalRows + headerHeight + paginationHeight;
+      mainContainerRef.current.style.height = `${containerHeight}px`;
+    }
+  };
 
-  // --- Columns for DataTable ---
+  adjustTableHeight();
+  window.addEventListener('resize', adjustTableHeight);
+  return () => window.removeEventListener('resize', adjustTableHeight);
+}, [limit]);
+
+
+  // Columns for DataTable
   const columns = useMemo(
     () => [
       {
@@ -213,6 +212,49 @@ export default function AdminDashboard() {
 
   return (
     <div className="flex h-full flex-col gap-4 p-4">
+      <style>
+  {`
+    /* Container disables scrolling */
+    .no-scroll-table,
+    .no-scroll-table > div,
+    .no-scroll-table .data-table-container,
+    .no-scroll-table .data-table-container > div {
+      overflow: hidden !important;
+      max-height: none !important;
+    }
+
+    /* Table retains native layout for proper column alignment */
+    .no-scroll-table table {
+      display: table !important;
+      width: 100% !important;
+      table-layout: fixed !important;
+      border-collapse: collapse;
+    }
+
+    /* Table body shows all rows, no scroll */
+    .no-scroll-table tbody {
+      display: table-row-group !important;
+      overflow: hidden !important;
+      max-height: none !important;
+    }
+
+    /* Rows have fixed height */
+    .no-scroll-table tr {
+      display: table-row !important<th class="h-12 align-middle whitespace-nowrap bg-surface-secondary px-2 py-2 text-left text-sm font-medium text-text-secondary sm:px-4" style="width: 140px; max-width: 140px;">Total Cost (USD)</th>
+      height: 48px ; /* Adjust row height */
+    }
+
+    /* Cells aligned properly */
+    .no-scroll-table td {
+      display: table-cell !important;
+      height: 48px !important;
+      vertical-align: middle;
+      overflow: hidden;
+      padding: 0 8px; /* Optional: adjust spacing */
+    }
+  `}
+</style>
+
       {/* Header */}
       <div className="mb-3 flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
         <div className="flex items-center gap-3">
@@ -220,7 +262,6 @@ export default function AdminDashboard() {
             variant="ghost"
             size="icon"
             onClick={handleGoBack}
-            // onClick={() => (window.location.href = '/c/new')}
             className="rounded-full"
           >
             <ArrowLeft className="h-5 w-5" />
@@ -232,34 +273,50 @@ export default function AdminDashboard() {
       {/* Search */}
       <SearchBar
         search={search}
-        setSearch={setSearch}
-        // onSearch={() => {
-        //   setPage(1);
-        //   usersQuery.refetch();
-        // }}
+        setSearch={(value) => {
+          setSearch(value);
+          setPage(1);
+        }}
       />
 
-      {/* Users Table */}
-      <div ref={mainContainerRef} className="flex-grow overflow-hidden">
-        <DataTable
-          columns={columns as any}
-          data={data.map((r, i) => ({ ...r, id: r._id || i }))}
-          className="flex h-full flex-col gap-4"
-          enableRowSelection={false}
-          showCheckboxes={false}
-          onDelete={undefined}
-        />
+      {/* Table with Loading Overlay */}
+      <div ref={mainContainerRef} className="relative flex-1 min-h-0 no-scroll-table">
+        {usersQuery.isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50 dark:bg-gray-800 dark:bg-opacity-50 z-10">
+            <svg className="animate-spin h-5 w-5 text-gray-500" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            </svg>
+            <p className="ml-2 text-gray-500 dark:text-gray-400">Loading...</p>
+          </div>
+        )}
+        <div className="h-full data-table-container">
+          <DataTable
+            columns={columns as any}
+            data={data.slice(0, limit).map((r, i) => ({ ...r, id: r._id || i }))}
+            className="h-full"
+            enableRowSelection={false}
+            showCheckboxes={false}
+            onDelete={undefined}
+          />
+        </div>
       </div>
+      {data.length === 0 && !usersQuery.isLoading && (
+        <div className="flex h-40 w-full items-center justify-center">
+          <p className="text-gray-500 dark:text-gray-400">No matching users found</p>
+        </div>
+      )}
 
-      {/* Pagination (reusable component) */}
+      {/* Pagination */}
       {total > 0 && (
-        <Pagination
-          page={page}
-          limit={limit}
-          total={total}
-         // data={data}
-          onPageChange={setPage}
-        />
+        <div data-testid="pagination-container" className="flex-shrink-0">
+          <Pagination
+            page={page}
+            limit={limit}
+            total={total}
+            onPageChange={setPage}
+            siblingCount={1}
+          />
+        </div>
       )}
 
       {/* Usage Dialog */}
