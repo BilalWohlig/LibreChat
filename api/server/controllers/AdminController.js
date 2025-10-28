@@ -366,6 +366,28 @@ const listUserActivities = async (req, res) => {
 };
 
 /**
+ * Get total expenditure across all users
+ */
+const getTotalExpenditure = async (req, res) => {
+  try {
+    const result = await Transaction.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalExpenditure: { $sum: '$tokenValue' }
+        }
+      }
+    ]);
+
+    const totalExpenditure = result.length > 0 ? result[0].totalExpenditure : 0;
+    res.status(200).json({ totalExpenditure });
+  } catch (error) {
+    logger.error('[admin:getTotalExpenditure]', error);
+    res.status(500).json({ message: 'Failed to fetch total expenditure' });
+  }
+};
+
+/**
  * Get aggregated login/logout stats for a user
  */
 const getUserActivityStats = async (req, res) => {
@@ -433,4 +455,5 @@ module.exports = {
   getUserUsage,
   listUserActivities,
   getUserActivityStats,
+  getTotalExpenditure,
 };

@@ -71,6 +71,14 @@ export default function AdminDashboard() {
     },
   });
 
+  // Fetch Total Expenditure across all users
+  const totalExpenditureQuery = useQuery({
+    queryKey: [QueryKeys.roles, 'admin', 'total-expenditure'],
+    queryFn: async () => await request.get('/api/admin/total-expenditure'),
+    refetchInterval: 30000, // Refetch every 30 seconds for real-time updates
+    refetchOnWindowFocus: true,
+  });
+
   // Mutations
   const updateRoleMutation = useMutation({
     mutationFn: async ({ id, nextRole }: { id: string; nextRole: string }) =>
@@ -85,6 +93,9 @@ export default function AdminDashboard() {
 
   const data = ((usersQuery.data as any)?.users ?? []) as AdminUser[];
   const total = (usersQuery.data as any)?.total ?? 0;
+  
+  // Get total expenditure from API (across all users, not just current page)
+  const totalExpenditure = (totalExpenditureQuery.data as any)?.totalExpenditure ?? 0;
 
   // Adjust table height
   useEffect(() => {
@@ -267,6 +278,16 @@ export default function AdminDashboard() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">User Management</h2>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border-2 border-blue-500 bg-blue-50 px-4 py-2 shadow-lg dark:border-blue-400 dark:bg-blue-900/20">
+          <span className="text-sm font-medium text-blue-600 dark:text-blue-400">Total Expenditure:</span>
+          <span className="text-lg font-bold text-blue-900 dark:text-blue-100">
+            {totalExpenditureQuery.isLoading ? (
+              <span className="text-sm">Loading...</span>
+            ) : (
+              `$${Math.abs(totalExpenditure / 1000000).toFixed(2)}`
+            )}
+          </span>
         </div>
       </div>
 
