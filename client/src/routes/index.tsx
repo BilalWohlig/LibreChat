@@ -19,8 +19,9 @@ import ChatRoute from './ChatRoute';
 import Search from './Search';
 import Root from './Root';
 import AdminDashboard from '~/views/admin/AdminDashboard';
-import AdminLogs from '~/views/admin/AdminLogs'
-import QueryLogs from '~/views/admin/QueryLogs'
+import AdminLogs from '~/views/admin/AdminLogs';
+import QueryLogs from '~/views/admin/QueryLogs';
+import ErrorMessages from '~/views/admin/ErrorMessages';
 
 const AuthLayout = () => (
   <AuthContextProvider>
@@ -120,9 +121,12 @@ export const router = createBrowserRouter([
             path: 'admin/query-logs',
             element: <QueryLogs />,
           },
+          {
+            path: 'admin/error-messages',
+            element: <ErrorMessages />,
+          },
         ],
       },
-      
     ],
   },
 ]);
