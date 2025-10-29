@@ -15,9 +15,24 @@ const App = () => {
   const { setError } = useApiErrorBoundary();
 
   const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        retry: (failureCount, error) => {
+          // Don't retry on 401 errors to prevent interference with token refresh
+          if (error?.response?.status === 401) {
+            return false;
+          }
+          return failureCount < 3;
+        },
+      },
+    },
     queryCache: new QueryCache({
       onError: (error) => {
-        if (error?.response?.status === 401) {
+        // Only set error for 401 if it's not a token refresh related endpoint
+        if (error?.response?.status === 401 && 
+            !error?.config?.url?.includes('/api/auth/refresh')) {
           setError(error);
         }
       },
