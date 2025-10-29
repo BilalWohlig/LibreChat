@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button } from '~/components/ui/Button';
 import { useNavigate } from 'react-router-dom';
-import { Users, FileText } from 'lucide-react'; // <-- import icons
+import { Users, FileText, AlertTriangle } from 'lucide-react'; // <-- import icons
 
 export default function AdminPanel() {
   const navigate = useNavigate();
@@ -45,6 +45,16 @@ export default function AdminPanel() {
         >
           <FileText className="h-5 w-5" />
           Query Logs
+        </Button>
+
+        {/* Error Messages Button */}
+        <Button
+          type="button"
+          className="flex h-10 w-full items-center justify-start gap-3 rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={() => handleNavigation('/admin/error-messages')}
+        >
+          <AlertTriangle className="h-5 w-5" />
+          Error Messages
         </Button>
       </div>
     </div>
