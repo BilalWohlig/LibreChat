@@ -200,11 +200,23 @@ const AuthContextProvider = ({
     const handleTokenUpdate = (event) => {
       console.log('tokenUpdated event received event');
       const newToken = event.detail;
-      setUserContext({
-        token: newToken,
-        isAuthenticated: true,
-        user: user,
-      });
+      
+      // Only update token if we're not in the middle of navigation
+      const isNavigating = window.location.pathname.includes('/admin') || 
+                          window.location.pathname.includes('/c/');
+      
+      if (newToken && !isNavigating) {
+        setUserContext({
+          token: newToken,
+          isAuthenticated: true,
+          user: user,
+        });
+      } else if (newToken) {
+        // Still update the token in localStorage for admin pages, but don't trigger full context update
+        localStorage.setItem("token", newToken);
+        setTokenHeader(newToken);
+        console.log('Token updated silently during navigation to prevent chat disruption');
+      }
     };
 
     window.addEventListener('tokenUpdated', handleTokenUpdate);
