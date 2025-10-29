@@ -30,7 +30,6 @@ interface QueryLog {
   conversationId: string;
   user: { name?: string; email?: string; id?: string };
   title?: string;
-  totalTokens?: number;
   messageCount?: number;
   createdAt: string;
   updatedAt?: string;
@@ -48,6 +47,7 @@ interface SSEMessageData {
   conversationId?: string;
   toolType?: string | null;
   searchQuery?: string | null;
+  attachments?: any[] | null;
 }
 
 interface QueryLogDetailsDialogProps {
@@ -55,7 +55,81 @@ interface QueryLogDetailsDialogProps {
   setDialogOpen: (open: boolean) => void;
   selectedLog: QueryLog | null;
 }
+// Helper function to parse citations and replace with clickable links
+const parseCitations = (text: string, attachments: any[]): string => {
+  let processedText = text;
+  
+  // Find web_search attachment if available
+  const webSearchAttachment = attachments?.find(att => att.type === 'web_search');
+  const searchData = webSearchAttachment?.web_search;
 
+  if (searchData) {
+    // Replace standalone citation markers with clickable links
+    const citationPattern = /\\ue202turn(\d+)(search|image|news|video|ref)(\d+)/g;
+
+    processedText = processedText.replace(citationPattern, (match, turn, refType, index) => {
+      const refIndex = parseInt(index);
+
+      // Map refType to possible searchData keys (try multiple variations)
+      const possibleKeys: { [key: string]: string[] } = {
+        'search': ['organic', 'results', 'webResults', 'search'],
+        'news': ['topStories', 'news', 'newsResults'],
+        'image': ['images', 'imageResults'],
+        'video': ['videos', 'videoResults'],
+        'ref': ['references', 'refs', 'sources']
+      };
+
+      // Try to find the data using possible key variations
+      let source: any = null;
+      const keysToTry = possibleKeys[refType] || [refType];
+      
+      for (const key of keysToTry) {
+        if (searchData[key] && Array.isArray(searchData[key]) && searchData[key][refIndex]) {
+          source = searchData[key][refIndex];
+          break;
+        }
+      }
+
+      // If no source found, try direct access
+      if (!source && searchData[refIndex]) {
+        source = searchData[refIndex];
+      }
+
+      // If we found a source, extract URL and title
+      if (source) {
+        // Try multiple possible URL field names
+        const url = source.link || source.url || source.href || source.uri || source.source || '#';
+        
+        // Try multiple possible title field names, fallback to snippet or URL
+        const title = source.title || 
+                      source.name || 
+                      source.heading || 
+                      source.snippet || 
+                      source.description || 
+                      source.text || 
+                      url.substring(0, 50) || 
+                      `Source ${refIndex + 1}`;
+        
+        // Return HTML link with superscript number
+        return `<sup><a href="${url}" target="_blank" rel="noopener noreferrer" title="${title.replace(/"/g, '&quot;')}">[${refIndex + 1}]</a></sup>`;
+      }
+
+      // Fallback: return just the number if no source found
+      return `<sup>[${refIndex + 1}]</sup>`;
+    });
+  }
+
+  // Remove all remaining citation markers (highlighted text, composite markers, etc.)
+  processedText = processedText
+    .replace(/\\ue203/g, '')  // Remove highlight start marker
+    .replace(/\\ue204/g, '')  // Remove highlight end marker
+    .replace(/\\ue200/g, '')  // Remove composite start marker
+    .replace(/\\ue201/g, '')  // Remove composite end marker
+    .replace(/\\ue206/g, '')  // Remove any other markers
+    .replace(/\\ue202turn\d+(search|image|news|video|ref)\d+/g, ''); // Remove any remaining citation markers
+
+  return processedText;
+};
 const parseMessageSegments = (text: string): MessageSegment[] => {
   const segments: MessageSegment[] = [];
   const codeRegex = /```(\w+)?\n([\s\S]*?)\n```/g;
@@ -103,6 +177,86 @@ const detectMessageType = (text: string): MessageType => {
   }
 };
 
+// Helper to render text with both code blocks and citations
+const renderMessageWithCode = (text: string, attachments: any[]) => {
+  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+  const segments: { type: 'text' | 'code'; content: string; language?: string }[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    // Add text before code block
+    if (match.index > lastIndex) {
+      segments.push({
+        type: 'text',
+        content: text.slice(lastIndex, match.index),
+      });
+    }
+    // Add code block
+    segments.push({
+      type: 'code',
+      language: match[1] || 'text',
+      content: match[2],
+    });
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    segments.push({
+      type: 'text',
+      content: text.slice(lastIndex),
+    });
+  }
+
+  // If no code blocks found, treat entire text as text
+  if (segments.length === 0) {
+    segments.push({
+      type: 'text',
+      content: text,
+    });
+  }
+
+  return segments.map((segment, idx) => {
+    if (segment.type === 'code') {
+      const handleCopy = () => {
+        navigator.clipboard.writeText(segment.content);
+        // Optional: Show a toast or temporary feedback
+      };
+      
+      return (
+        <div key={idx} className="relative bg-black rounded-md p-3 my-2 overflow-x-auto group">
+          <button
+            onClick={handleCopy}
+            className="absolute top-2 right-2 px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Copy code"
+          >
+            Copy
+          </button>
+          <pre className="m-0">
+            <code className="text-white font-mono" style={{ color: '#ffffff', fontWeight: 400, opacity: 1 }}>
+              {segment.content}
+            </code>
+          </pre>
+        </div>
+      );
+    } else {
+      // Original citation logic for text segments
+      const processedHtml = parseCitations(segment.content, attachments)
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br/>')
+        .replace(/^(.+)$/, '<p>$1</p>');
+      
+      return (
+        <div
+          key={idx}
+          dangerouslySetInnerHTML={{ __html: processedHtml }}
+        />
+      );
+    }
+  });
+};
+
 const QueryLogDetailsDialog: React.FC<QueryLogDetailsDialogProps> = ({
   dialogOpen,
   setDialogOpen,
@@ -111,7 +265,7 @@ const QueryLogDetailsDialog: React.FC<QueryLogDetailsDialogProps> = ({
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [historyError, setHistoryError] = React.useState<string | null>(null);
   const [history, setHistory] = React.useState<
-    { id?: string; role: 'ai' | 'user' | 'tool'; text: string; createdAt: string; model?: string | null; tokenCount?: number; conversationId?: string; toolType?: string | null; searchQuery?: string | null }[]
+    { id?: string; role: 'ai' | 'user' | 'tool'; text: string; createdAt: string; model?: string | null; tokenCount?: number; conversationId?: string; toolType?: string | null; searchQuery?: string | null; attachments?: any[] | null }[]
   >([]);
 
   const sseRef = React.useRef<EventSourcePolyfill | null>(null);
@@ -172,6 +326,7 @@ const QueryLogDetailsDialog: React.FC<QueryLogDetailsDialogProps> = ({
             conversationId: data.conversationId,
             toolType: data.toolType ?? null,
             searchQuery: data.searchQuery ?? null,
+            attachments: data.attachments ?? null,
           };
 
           setHistory((prev) => [entry, ...prev]);
@@ -339,40 +494,14 @@ const QueryLogDetailsDialog: React.FC<QueryLogDetailsDialogProps> = ({
                               </div>
                             </div>
                             <div className="prose prose-sm max-w-none break-words dark:prose-invert">
-                              <ReactMarkdown
-                                components={{
-code: ({
-                                    inline,
-                                    className,
-                                    children,
-                                    ...props
-                                  }: CodeProps) => {
-                                    const match = /language-(\w+)/.exec(className || '');
-                                    return !inline && match ? (
-                                      <div className="bg-black rounded-md p-3 my-2 overflow-x-auto">
-                                        <pre className="m-0">
-                                          <code className={`text-gray-200 ${className || ''}`} {...props}>
-                                            {children}
-                                          </code>
-                                        </pre>
-                                      </div>
-                                    ) : (
-                                      <code className="bg-gray-100 dark:bg-gray-700 rounded px-1 py-0.5 text-sm" {...props}>
-                                        {children}
-                                      </code>
-                                    );
-                                  },
-                                } as Components}
-                              >
-                                {h.text || ''}
-                              </ReactMarkdown>
+                              {renderMessageWithCode(h.text || '', h.attachments || [])}
                             </div>
                             {h.toolType === 'web_search' && h.searchQuery && (
                               <div className="text-xs text-muted-foreground mt-1">
                                 Search Query: {h.searchQuery}
                               </div>
                             )}
-                          </div>
+                        </div>
                         </div>
                       </li>
                     ))}
