@@ -11,6 +11,7 @@ const {
   getUserUsage,
   listUserActivities,
   getUserActivityStats,
+  getTotalExpenditure,
 } = require('~/server/controllers/AdminController');
 
 const router = express.Router();
@@ -34,6 +35,9 @@ router.get('/users/:id/usage', getUserUsage);
 // User Activities
 router.get('/user-activities', listUserActivities);
 router.get('/users/:id/activity-stats', getUserActivityStats);
+
+// Total Expenditure
+router.get('/total-expenditure', getTotalExpenditure);
 
 module.exports = router;
 
