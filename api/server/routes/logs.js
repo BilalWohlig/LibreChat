@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const moment = require('moment'); // Ensure Moment.js is imported
+const moment = require('moment');
 const router = express.Router();
 const { requireJwtAuth, checkAdmin } = require('~/server/middleware');
 const queryLogger = require('~/server/services/QueryLogger');
@@ -12,23 +12,21 @@ router.use(requireJwtAuth, checkAdmin);
 
 /** ---------------- Shared Helpers ---------------- **/
 
-// Build filter and search conditions from query parameters
 const buildFilterFromQuery = (query = {}) => {
   const { search } = query;
   const filter = {};
   let userMatchExpr = null;
 
-  if (search) {
-    filter.$or = [
-      { model: { $regex: search, $options: 'i' } },
-      { text: { $regex: search, $options: 'i' } },
-    ];
+  if (search && search.trim()) {
+    const searchTerm = search.trim();
+    logger.info('[buildFilterFromQuery] Building search filter for:', searchTerm);
+
     userMatchExpr = {
       $expr: {
         $or: [
-          { $regexMatch: { input: '$userInfo.name', regex: search, options: 'i' } },
-          { $regexMatch: { input: '$userInfo.email', regex: search, options: 'i' } },
-          { $regexMatch: { input: '$conversationDoc.title', regex: search, $options: 'i' } },
+          { $regexMatch: { input: { $ifNull: ['$userInfo.name', ''] }, regex: searchTerm, options: 'i' } },
+          { $regexMatch: { input: { $ifNull: ['$userInfo.email', ''] }, regex: searchTerm, options: 'i' } },
+          { $regexMatch: { input: { $ifNull: ['$conversationDoc.title', ''] }, regex: searchTerm, options: 'i' } },
         ],
       },
     };
@@ -37,7 +35,6 @@ const buildFilterFromQuery = (query = {}) => {
   return { filter, userMatchExpr };
 };
 
-// Build aggregation pipeline for conversations
 const buildConversationsAggregation = (filter, userMatchExpr, { skip = 0, limitNum = 10 }) => {
   const pipeline = [
     { $match: filter },
@@ -110,7 +107,6 @@ const buildConversationsAggregation = (filter, userMatchExpr, { skip = 0, limitN
   return pipeline;
 };
 
-// Fetch conversations with pagination
 const fetchConversations = async (query = {}) => {
   const pageNum = Math.max(parseInt(query.page ?? 1, 10), 1);
   const limitQ = Math.min(Math.max(parseInt(query.limit ?? 10, 10), 1), 100);
@@ -118,13 +114,14 @@ const fetchConversations = async (query = {}) => {
 
   const { filter, userMatchExpr } = buildFilterFromQuery(query);
   logger.info('[fetchConversations] Query params:', query);
-  logger.info('[fetchConversations] Built filter:', filter);
 
+  // Count pipeline
   const countPipeline = [
     { $match: filter },
     {
       $group: {
         _id: '$conversationId',
+        user: { $first: '$user' },
       },
     },
     {
@@ -166,15 +163,28 @@ const fetchConversations = async (query = {}) => {
     ...(userMatchExpr ? [{ $match: userMatchExpr }] : []),
     { $count: 'total' },
   ];
-  const [countResult] = await Message.aggregate(countPipeline);
-  const totalCount = countResult?.total || 0;
-  logger.info('[fetchConversations] Total conversations count:', totalCount);
 
-  let skip = all ? 0 : (pageNum - 1) * limitQ;
-  let limitNum = all ? Math.max(totalCount, 1) : limitQ;
+  let totalCount = 0;
+  try {
+    const [countResult] = await Message.aggregate(countPipeline);
+    totalCount = countResult?.total || 0;
+    logger.info('[fetchConversations] Total:', totalCount);
+  } catch (err) {
+    logger.error('[fetchConversations] Count error:', err);
+  }
 
-  const conversations = await Message.aggregate(buildConversationsAggregation(filter, userMatchExpr, { skip, limitNum }));
-  logger.info('[fetchConversations] Retrieved conversations count:', conversations.length);
+  const skip = all ? 0 : (pageNum - 1) * limitQ;
+  const limitNum = all ? Math.max(totalCount, 1) : limitQ;
+
+  let conversations = [];
+  try {
+    conversations = await Message.aggregate(
+      buildConversationsAggregation(filter, userMatchExpr, { skip, limitNum })
+    );
+    logger.info('[fetchConversations] Retrieved:', conversations.length);
+  } catch (err) {
+    logger.error('[fetchConversations] Fetch error:', err);
+  }
 
   const totalPages = Math.max(1, Math.ceil(totalCount / limitNum));
 
@@ -192,7 +202,6 @@ const fetchConversations = async (query = {}) => {
 
 /** ---------------- End Helpers ---------------- **/
 
-// Build log data for SSE streaming
 async function buildLogData(message, eventType = 'log') {
   const user = await User.findById(message.user).lean();
   const userInfo = user ? { name: user.name, email: user.email, id: message.user } : { id: message.user };
@@ -209,10 +218,11 @@ async function buildLogData(message, eventType = 'log') {
     createdAt: message.createdAt.toISOString(),
     toolType: message.toolCalls?.[0]?.type || null,
     searchQuery: message.toolCalls?.find(t => t.type === 'web_search')?.query || null,
+    attachments : message.attachments || null,
   };
 }
 
-// Endpoint: Fetch individual query by messageId
+// Endpoint: Fetch individual query
 router.get('/query/:messageId', async (req, res) => {
   try {
     const message = await Message.findOne({ messageId: req.params.messageId }).lean();
@@ -221,7 +231,7 @@ router.get('/query/:messageId', async (req, res) => {
     }
     res.json({ messageId: message.messageId, query: message.text || '' });
   } catch (error) {
-    logger.error('[logs/query] Error fetching full query:', error);
+    logger.error('[logs/query] Error:', error);
     res.status(500).json({ message: 'Error fetching full query' });
   }
 });
@@ -230,41 +240,37 @@ router.get('/query/:messageId', async (req, res) => {
 router.get('/queries/export', async (req, res) => {
   try {
     const { search } = req.query;
-    const filter = search ? {
-      $or: [
-        { model: { $regex: search, $options: 'i' } },
-        { text: { $regex: search, $options: 'i' } },
-      ],
-    } : {};
+    const filter = {};
 
-    if (search) {
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      filter.$or = [
+        { model: { $regex: searchTerm, $options: 'i' } },
+        { text: { $regex: searchTerm, $options: 'i' } },
+      ];
+
       const matchingUsers = await User.find({
         $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
+          { name: { $regex: searchTerm, $options: 'i' } },
+          { email: { $regex: searchTerm, $options: 'i' } },
         ],
       }).distinct('_id');
+
       if (matchingUsers.length > 0) {
-        filter.$or = filter.$or || [];
         filter.$or.push({ user: { $in: matchingUsers } });
       }
     }
 
     const messages = await Message.find(filter)
-      .populate({
-        path: 'user',
-        select: 'name email',
-        model: 'User',
-      })
+      .populate({ path: 'user', select: 'name email', model: 'User' })
       .select('user text model tokenCount createdAt toolCalls conversationId')
-      .sort({ createdAt: -1 }) // Sort newest first
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!messages || messages.length === 0) {
-      return res.status(404).json({ message: 'No query logs found matching the criteria' });
+      return res.status(404).json({ message: 'No query logs found' });
     }
 
-    // Fetch conversation titles
     const conversationIds = [...new Set(messages.map((m) => m.conversationId))];
     const conversations = await Conversation.find({ conversationId: { $in: conversationIds } })
       .select('conversationId title')
@@ -276,14 +282,12 @@ router.get('/queries/export', async (req, res) => {
 
     const formattedLogs = messages.map((message) => ({
       role: message.model ? 'assistant' : message.toolCalls?.length ? 'tool' : 'user',
-      model: message.model || null,
+      model: message.model || '',
       text: message.text || '',
       tokenCount: message.tokenCount || 0,
-      createdAt: message.createdAt ? moment(message.createdAt).format('Do MMMM YY, h:mm:ss a') : moment().format('Do MMM YY, h:mm:ss a'),
-      user: {
-        name: message.user?.name || 'N/A',
-        email: message.user?.email || 'N/A',
-      },
+      createdAt: message.createdAt,
+      userName: message.user?.name || '',
+      userEmail: message.user?.email || '',
       toolType: message.toolCalls?.[0]?.type || null,
       searchQuery: message.toolCalls?.find(t => t.type === 'web_search')?.query || null,
       conversationId: message.conversationId,
@@ -294,114 +298,105 @@ router.get('/queries/export', async (req, res) => {
     const date = new Date().toISOString().split('T')[0];
     const filename = `query-logs-${date}.csv`;
 
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Pragma', 'no-cache');
 
     return res.send(csv);
   } catch (error) {
-    logger.error('[logs/queries/export] Error exporting query logs to CSV:', error);
-    return res.status(500).json({ message: 'Failed to export query logs', error: error.message });
+    logger.error('[logs/queries/export] Error:', error);
+    return res.status(500).json({ message: 'Failed to export', error: error.message });
   }
 });
 
-// Modified Endpoint: Export all conversation messages to CSV
+
+// --- **Replaced** conversations/export logic — flat CSV export of messages
 router.get('/conversations/export', async (req, res) => {
   try {
     const { search } = req.query;
-
-    // Build search filter
     const filter = {};
-    if (search) {
-      filter.$or = [
-        { model: { $regex: search, $options: 'i' } },
-      ];
-    }
 
-    // Find matching users for name/email search
-    if (search) {
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      filter.$or = [
+        { model: { $regex: searchTerm, $options: 'i' } },
+      ];
+
       const matchingUsers = await User.find({
         $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
+          { name: { $regex: searchTerm, $options: 'i' } },
+          { email: { $regex: searchTerm, $options: 'i' } },
         ],
       }).distinct('_id');
+
       if (matchingUsers.length > 0) {
-        filter.$or = filter.$or || [];
         filter.$or.push({ user: { $in: matchingUsers } });
       }
     }
 
-    // Get all matching messages with required fields and populate user data
     const messages = await Message.find(filter)
-      .populate({
-        path: 'user',
-        select: 'name email',
-        model: 'User'
-      })
-      .select('user text model tokenCount createdAt')
-      .sort({ createdAt: -1 }) // Sort newest first
+      .populate({ path: 'user', select: 'name email', model: 'User' })
+      .select('user text model tokenCount createdAt toolCalls conversationId')
+      .sort({ createdAt: -1 })  // Latest first
       .lean();
 
     if (!messages || messages.length === 0) {
       return res.status(404).json({ message: 'No messages found matching the criteria' });
     }
 
-    // Format messages for CSV export
     const formattedLogs = messages.map((message) => {
       const user = message.user || {};
       const isAI = !!message.model;
-      
+
       return {
+        conversationId: message.conversationId,
         role: isAI ? 'assistant' : 'user',
-        model: message.model || null,
+        model: message.model || '',
         text: message.text || '',
         tokenCount: message.tokenCount || 0,
-        createdAt: message.createdAt ? moment(message.createdAt).format('Do MMMM YY, h:mm:ss a') : moment().format('Do MMMM YY, h:mm:ss a'),
-        user: {
-          name: user.name || 'N/A',
-          email: user.email || 'N/A'
-        }
+        createdAt: message.createdAt,
+        userName: user.name || '',
+        userEmail: user.email || '',
+        toolType: message.toolCalls?.[0]?.type || null,
+        searchQuery: message.toolCalls?.find(t => t.type === 'web_search')?.query || null,
       };
     });
 
-    // Generate CSV
     const csv = await exportQueryLogsToCSV(formattedLogs);
-    
-    // Set headers for file download
     const date = new Date().toISOString().split('T')[0];
-    const filename = `all-conversations-${date}.csv`;
-    
-    res.setHeader('Content-Type', 'text/csv');
+    const filename = `conversations-${date}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Pragma', 'no-cache');
-    
-    // Send the CSV file
+
     return res.send(csv);
   } catch (error) {
-    logger.error('[logs/conversations/export] Error exporting conversation messages to CSV:', error);
+    logger.error('[logs/conversations/export] Error generating CSV:', error);
     return res.status(500).json({ message: 'Failed to export conversation messages', error: error.message });
   }
 });
 
-// Endpoint: Export messages for a specific conversation to CSV
+
+// Endpoint: Export messages for a specific conversation
 router.get('/conversations/:conversationId/export', async (req, res) => {
   try {
     const { conversationId } = req.params;
     const { search } = req.query;
 
     const filter = { conversationId };
-    if (search) {
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
       filter.$or = [
-        { model: { $regex: search, $options: 'i' } },
-        { text: { $regex: search, $options: 'i' } },
+        { model: { $regex: searchTerm, $options: 'i' } },
+        { text: { $regex: searchTerm, $options: 'i' } },
       ];
       const matchingUsers = await User.find({
         $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
+          { name: { $regex: searchTerm, $options: 'i' } },
+          { email: { $regex: searchTerm, $options: 'i' } },
         ],
       }).distinct('_id');
       if (matchingUsers.length > 0) {
@@ -410,13 +405,9 @@ router.get('/conversations/:conversationId/export', async (req, res) => {
     }
 
     const messages = await Message.find(filter)
-      .populate({
-        path: 'user',
-        select: 'name email',
-        model: 'User',
-      })
+      .populate({ path: 'user', select: 'name email', model: 'User' })
       .select('user text model tokenCount createdAt toolCalls')
-      .sort({ createdAt: -1 }) // Sort newest first
+      .sort({ createdAt: -1 })  // Latest first
       .lean();
 
     if (!messages || messages.length === 0) {
@@ -428,14 +419,12 @@ router.get('/conversations/:conversationId/export', async (req, res) => {
 
     const formattedLogs = messages.map((message) => ({
       role: message.model ? 'assistant' : message.toolCalls?.length ? 'tool' : 'user',
-      model: message.model || null,
+      model: message.model || '',
       text: message.text || '',
       tokenCount: message.tokenCount || 0,
-      createdAt: message.createdAt ? moment(message.createdAt).format('Do MMM YY, h:mm:ss a') : moment().format('Do MMM YY, h:mm:ss a'),
-      user: {
-        name: message.user?.name || 'N/A',
-        email: message.user?.email || 'N/A',
-      },
+      createdAt: message.createdAt,
+      userName: message.user?.name || '',
+      userEmail: message.user?.email || '',
       toolType: message.toolCalls?.[0]?.type || null,
       searchQuery: message.toolCalls?.find(t => t.type === 'web_search')?.query || null,
       conversationId,
@@ -446,21 +435,22 @@ router.get('/conversations/:conversationId/export', async (req, res) => {
     const date = new Date().toISOString().split('T')[0];
     const filename = `conversation-${conversationId}-${date}.csv`;
 
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Pragma', 'no-cache');
 
     return res.send(csv);
   } catch (error) {
-    logger.error(`[logs/conversations/${req.params.conversationId}/export] Error exporting conversation messages to CSV:`, error);
-    return res.status(500).json({ message: 'Failed to export conversation messages', error: error.message });
+    logger.error(`[logs/conversations/${req.params.conversationId}/export] Error:`, error);
+    return res.status(500).json({ message: 'Failed to export', error: error.message });
   }
 });
 
-// Endpoint: Fetch conversation summaries with real-time updates
+// SSE: conversations list
 router.get('/conversations', async (req, res) => {
-  logger.info('[logs/conversations] Starting SSE response for user:', req.user?.email || 'unknown');
+  logger.info('[logs/conversations] SSE start for:', req.user?.email);
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -468,70 +458,52 @@ router.get('/conversations', async (req, res) => {
   res.write('retry: 10000\n\n');
   res.flushHeaders();
 
-  try {
-    const { conversations, pagination } = await fetchConversations(req.query);
-    const { currentPage, totalPages, totalCount, hasNext, hasPrev } = pagination;
-
-    res.write(`data: ${JSON.stringify({
-      type: 'init',
-      count: conversations.length,
-      total: totalCount,
-      pagination: { currentPage, totalPages, hasNext, hasPrev },
-    })}\n\n`);
-    res.flush();
-
-    for (const c of conversations) {
-      try {
-        const conversationData = {
-          event: 'historical_conversation',
-          type: 'conversation_summary',
-          conversationId: c.conversationId,
-          user: c.user,
-          title: c.title,
-          createdAt: c.createdAt.toISOString(),
-          updatedAt: c.updatedAt.toISOString(),
-          totalTokens: c.totalTokens,
-          messageCount: c.messageCount,
-        };
-        res.write(`data: ${JSON.stringify(conversationData)}\n\n`);
-        res.flush();
-      } catch (error) {
-        logger.error(`[logs/conversations] Error processing conversation ${c.conversationId}:`, error);
-      }
-    }
-
-    res.write(`data: ${JSON.stringify({ type: 'historical_complete' })}\n\n`);
-    res.flush();
-  } catch (error) {
-    logger.error('[logs/conversations] Error fetching conversations:', error);
-    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Error fetching conversations' })}\n\n`);
-    res.flush();
-    res.end();
-    return;
-  }
-
   const heartbeatInterval = setInterval(() => {
     res.write(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`);
     res.flush();
   }, 30000);
 
-  const processedConversationIds = new Set();
   let changeStream;
   let convoChangeStream;
+  const processedConversationIds = new Set();
 
-  // Skip change streams if real-time is disabled
-  const disableRealtime = process.env.DISABLE_REALTIME_LOGS === 'true';
+  try {
+    const { conversations, pagination } = await fetchConversations(req.query);
 
-  if (!disableRealtime) {
-    try {
-      const { filter, userMatchExpr } = buildFilterFromQuery(req.query);
-      changeStream = Message.watch([{ $match: { operationType: 'insert', ...filter } }], { fullDocument: 'updateLookup' });
+    res.write(`data: ${JSON.stringify({ 
+      type: 'init', 
+      total: pagination.totalCount, 
+      count: conversations.length,
+      pagination 
+    })}\n\n`);
+    res.flush();
+
+    for (const convo of conversations) {
+      const payload = {
+        event: 'historical_conversation',
+        conversationId: convo.conversationId,
+        user: convo.user,
+        title: convo.title,
+        createdAt: convo.createdAt.toISOString(),
+        updatedAt: convo.updatedAt.toISOString(),
+        totalTokens: convo.totalTokens,
+        messageCount: convo.messageCount,
+      };
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      res.flush();
+      processedConversationIds.add(convo.conversationId);
+    }
+
+    res.write(`data: ${JSON.stringify({ type: 'historical_complete' })}\n\n`);
+    res.flush();
+
+    const { filter, userMatchExpr } = buildFilterFromQuery(req.query);
+    changeStream = Message.watch([{ $match: { operationType: 'insert', ...filter } }], { fullDocument: 'updateLookup' });
 
     changeStream.on('change', async (change) => {
       if (change.operationType !== 'insert') return;
       const newMessage = change.fullDocument;
-      if (!newMessage?.conversationId || processedConversationIds.has(newMessage.conversationId)) return;
-      processedConversationIds.add(newMessage.conversationId);
+      if (!newMessage?.conversationId) return;
 
       try {
         const [summary] = await Message.aggregate([
@@ -539,19 +511,36 @@ router.get('/conversations', async (req, res) => {
           ...buildConversationsAggregation({}, userMatchExpr, { skip: 0, limitNum: 1 }).slice(1),
         ]);
 
-        if (summary) {
-          if (userMatchExpr) {
-            const name = summary.user?.name || '';
-            const email = summary.user?.email || '';
-            const title = summary.title || '';
-            if (
-              !new RegExp(req.query.search, 'i').test(name) &&
-              !new RegExp(req.query.search, 'i').test(email) &&
-              !new RegExp(req.query.search, 'i').test(title)
-            ) {
-              return;
-            }
+        if (!summary) return;
+
+        if (userMatchExpr && req.query.search && req.query.search.trim()) {
+          const searchTerm = req.query.search.trim();
+          const name = summary.user?.name || '';
+          const email = summary.user?.email || '';
+          const title = summary.title || '';
+
+          if (
+            !new RegExp(searchTerm, 'i').test(name) &&
+            !new RegExp(searchTerm, 'i').test(email) &&
+            !new RegExp(searchTerm, 'i').test(title)
+          ) {
+            return;
           }
+        }
+
+        const tokenUpdatePayload = {
+          event: 'conversation_update',
+          type: 'tokens',
+          conversationId: summary.conversationId,
+          totalTokens: summary.totalTokens,
+          messageCount: summary.messageCount,
+          updatedAt: summary.updatedAt.toISOString(),
+        };
+        res.write(`data: ${JSON.stringify(tokenUpdatePayload)}\n\n`);
+        res.flush();
+
+        if (!processedConversationIds.has(newMessage.conversationId)) {
+          processedConversationIds.add(newMessage.conversationId);
 
           const conversationData = {
             event: 'realtime_conversation',
@@ -568,14 +557,12 @@ router.get('/conversations', async (req, res) => {
           res.flush();
         }
       } catch (error) {
-        logger.error(`[logs/conversations] Error processing real-time conversation ${newMessage.conversationId}:`, error);
+        logger.error('[logs/conversations] Real-time error:', error);
       }
     });
 
     changeStream.on('error', (error) => {
       logger.error('[logs/conversations] Change stream error:', error);
-      res.write(`event: error\ndata: ${JSON.stringify({ message: 'Change stream error' })}\n\n`);
-      res.flush();
     });
 
     convoChangeStream = Conversation.watch([{ $match: { operationType: 'update' } }], { fullDocument: 'updateLookup' });
@@ -585,17 +572,20 @@ router.get('/conversations', async (req, res) => {
         const updatedFields = change.updateDescription?.updatedFields || {};
         if (!('title' in updatedFields)) return;
 
-        const convDoc = change.fullDocument || (await Conversation.findById(change.documentKey?._id).select('conversationId title updatedAt user').lean());
+        const convDoc = change.fullDocument ||
+          (await Conversation.findById(change.documentKey?._id).select('conversationId title updatedAt user').lean());
         if (!convDoc?.conversationId) return;
 
-        if (req.query.search) {
+        if (req.query.search && req.query.search.trim()) {
+          const searchTerm = req.query.search.trim();
           const user = await User.findById(convDoc.user).lean();
           const name = user?.name || '';
           const email = user?.email || '';
+
           if (
-            !new RegExp(req.query.search, 'i').test(name) &&
-            !new RegExp(req.query.search, 'i').test(email) &&
-            !new RegExp(req.query.search, 'i').test(convDoc.title)
+            !new RegExp(searchTerm, 'i').test(name) &&
+            !new RegExp(searchTerm, 'i').test(email) &&
+            !new RegExp(searchTerm, 'i').test(convDoc.title)
           ) {
             return;
           }
@@ -611,21 +601,16 @@ router.get('/conversations', async (req, res) => {
         res.write(`data: ${JSON.stringify(payload)}\n\n`);
         res.flush();
       } catch (err) {
-        logger.error('[logs/conversations] Error processing conversation title update:', err);
+        logger.error('[logs/conversations] Title update error:', err);
       }
     });
 
     convoChangeStream.on('error', (err) => {
-      logger.error('[logs/conversations] Conversation change stream error:', err);
+      logger.error('[logs/conversations] Convo change stream error:', err);
     });
   } catch (err) {
-    logger.warn('[logs/conversations] Change streams unavailable; running without real-time updates:', err?.message || err);
-    res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates unavailable; showing historical conversations only' })}\n\n`);
-    res.flush();
-  }
-  } else {
-    logger.info('[logs/conversations] Real-time logs disabled by configuration');
-    res.write(`event: info\ndata: ${JSON.stringify({ message: 'Real-time updates disabled; showing historical conversations only' })}\n\n`);
+    logger.error('[logs/conversations] Setup error:', err);
+    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Error setting up connection' })}\n\n`);
     res.flush();
   }
 
@@ -634,29 +619,17 @@ router.get('/conversations', async (req, res) => {
   req.on('close', () => {
     logger.info('[logs/conversations] Client disconnected');
     queryLogger.removeClient(res);
-    if (changeStream) {
-      try {
-        changeStream.close();
-      } catch (err) {
-        logger.error('[logs/conversations] Error closing change stream:', err);
-      }
-    }
-    if (convoChangeStream) {
-      try {
-        convoChangeStream.close();
-      } catch (err) {
-        logger.error('[logs/conversations] Error closing conversation change stream:', err);
-      }
-    }
+    if (changeStream) changeStream.close();
+    if (convoChangeStream) convoChangeStream.close();
     clearInterval(heartbeatInterval);
     res.end();
   });
 });
 
-// Endpoint: Fetch detailed messages for a specific conversation
+// SSE: messages in a conversation
 router.get('/conversations/:conversationId/messages', async (req, res) => {
   const { conversationId } = req.params;
-  logger.info('[logs/conversations/messages] Starting SSE response for conversation:', conversationId);
+  logger.info('[logs/conversations/messages] Start SSE for:', conversationId);
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -667,7 +640,7 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
 
   try {
     const messages = await Message.find({ conversationId })
-      .select('messageId conversationId user model text tokenCount createdAt toolCalls')
+      .select('messageId conversationId user model text tokenCount createdAt toolCalls attachments')
       .sort({ createdAt: 1 })
       .lean();
 
@@ -702,21 +675,18 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
 
     for (const message of messages) {
       try {
-        const resolvedUser =
-          (typeof message.user === 'string' && userInfoMap[message.user]) || null;
-
         const messageData = await buildLogData(message, 'historical_message');
         res.write(`data: ${JSON.stringify(messageData)}\n\n`);
         res.flush();
       } catch (error) {
-        logger.error(`[logs/conversations/messages] Error processing message ${message.messageId}:`, error);
+        logger.error('[logs/conversations/messages] Message error:', error);
       }
     }
 
     res.write(`data: ${JSON.stringify({ type: 'historical_complete' })}\n\n`);
     res.flush();
   } catch (error) {
-    logger.error('[logs/conversations/messages] Error fetching messages:', error);
+    logger.error('[logs/conversations/messages] Fetch error:', error);
     res.write(`data: ${JSON.stringify({ type: 'init', conversationId, count: 0 })}\n\n`);
     res.flush();
   }
@@ -729,20 +699,9 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
   const processedMessageIds = new Set();
   let changeStream;
 
-  // Skip change streams if real-time is disabled
-  const disableRealtime = process.env.DISABLE_REALTIME_LOGS === 'true';
-
-  if (!disableRealtime) {
-    try {
-      changeStream = Message.watch(
-      [
-        {
-          $match: {
-            operationType: 'insert',
-            'fullDocument.conversationId': conversationId,
-          },
-        },
-      ],
+  try {
+    changeStream = Message.watch(
+      [{ $match: { operationType: 'insert', 'fullDocument.conversationId': conversationId } }],
       { fullDocument: 'updateLookup' },
     );
 
@@ -757,24 +716,15 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
         res.write(`data: ${JSON.stringify(messageData)}\n\n`);
         res.flush();
       } catch (error) {
-        logger.error(`[logs/conversations/messages] Error processing real-time message ${newMessage._id}:`, error);
+        logger.error('[logs/conversations/messages] Real-time message error:', error);
       }
     });
 
     changeStream.on('error', (error) => {
       logger.error('[logs/conversations/messages] Change stream error:', error);
-      res.write(`event: error\ndata: ${JSON.stringify({ message: 'Change stream error' })}\n\n`);
-      res.flush();
     });
   } catch (err) {
-    logger.warn('[logs/conversations/messages] Change streams unavailable; running without real-time updates:', err?.message || err);
-    res.write(`event: warning\ndata: ${JSON.stringify({ message: 'Real-time updates unavailable; showing historical messages only' })}\n\n`);
-    res.flush();
-  }
-  } else {
-    logger.info('[logs/conversations/messages] Real-time logs disabled by configuration');
-    res.write(`event: info\ndata: ${JSON.stringify({ message: 'Real-time updates disabled; showing historical messages only' })}\n\n`);
-    res.flush();
+    logger.warn('[logs/conversations/messages] Change stream unavailable:', err);
   }
 
   queryLogger.addClient(res);
@@ -782,19 +732,13 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
   req.on('close', () => {
     logger.info('[logs/conversations/messages] Client disconnected');
     queryLogger.removeClient(res);
-    if (changeStream) {
-      try {
-        changeStream.close();
-      } catch (err) {
-        logger.error('[logs/conversations/messages] Error closing change stream:', err);
-      }
-    }
+    if (changeStream) changeStream.close();
     clearInterval(heartbeatInterval);
     res.end();
   });
 });
 
-// Endpoint: Test database for conversations
+// Endpoint: Test database
 router.get('/test', requireJwtAuth, checkAdmin, async (req, res) => {
   try {
     const totalCount = await Message.aggregate([
