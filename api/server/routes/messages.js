@@ -1,4 +1,5 @@
 const express = require('express');
+const Papa = require('papaparse');
 const { logger } = require('@librechat/data-schemas');
 const { ContentTypes } = require('librechat-data-provider');
 const {
@@ -14,10 +15,137 @@ const { requireJwtAuth, validateMessageReq } = require('~/server/middleware');
 const { cleanUpPrimaryKeyValue } = require('~/lib/utils/misc');
 const { getConvosQueried } = require('~/models/Conversation');
 const { countTokens } = require('~/server/utils');
-const { Message } = require('~/db/models');
+const { Message, User } = require('~/db/models');
 
 const router = express.Router();
 router.use(requireJwtAuth);
+
+router.get('/errors/export', async (req, res) => {
+  try {
+    const { search } = req.query;
+    let filter = { error: true };
+    if (search) {
+      const userFilter = { name: { $regex: search, $options: 'i' } };
+      const users = await User.find(userFilter).select('_id').lean();
+      const userIds = users.map(user => user._id.toString());
+
+      const matchingMessages = await Message.find({ text: { $regex: search, $options: 'i' } }).select('messageId').lean();
+      const matchingMessageIds = matchingMessages.map(msg => msg.messageId);
+
+      filter.$or = [
+        { text: { $regex: search, $options: 'i' } },
+        { user: { $in: userIds } },
+        { parentMessageId: { $in: matchingMessageIds } }
+      ];
+    }
+
+    const messages = await Message.find(filter).sort({ createdAt: -1 }).lean();
+
+    const messagesWithPrior = await Promise.all(messages.map(async (msg) => {
+      const priorMessage = await Message.findOne({
+        conversationId: msg.conversationId,
+        createdAt: { $lt: msg.createdAt }
+      }).sort({ createdAt: -1 }).select('text').lean();
+      return { ...msg, priorMessage: priorMessage?.text || null };
+    }));
+
+    const allUserIds = [...new Set(messagesWithPrior.map((msg) => msg.user))];
+    const allUsers = await User.find({ _id: { $in: allUserIds } }).select('_id name').lean();
+    const userMap = allUsers.reduce((map, user) => {
+      map[user._id.toString()] = user.name;
+      return map;
+    }, {});
+
+    const messagesWithUsernames = messagesWithPrior.map((msg) => ({
+      ...msg,
+      username: userMap[msg.user] || 'Unknown',
+    }));
+
+    const csvData = messagesWithUsernames.map(msg => {
+      let errorText = msg.text;
+      try {
+        const parsed = JSON.parse(msg.text);
+        if (parsed && parsed.info) {
+          errorText = parsed.info;
+        }
+      } catch (e) {
+        // Not a JSON string
+      }
+      return {
+        'User': msg.username,
+        'Message': msg.priorMessage,
+        'Error': errorText,
+        'Date': msg.createdAt,
+      };
+    });
+
+    const csv = Papa.unparse(csvData);
+
+    res.header('Content-Type', 'text/csv');
+    res.attachment('error_messages.csv');
+    res.send(csv);
+
+  } catch (error) {
+    logger.error('Error exporting error messages:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/errors', async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search } = req.query;
+    const pageNumber = parseInt(page, 10);
+    const limitNumber = parseInt(limit, 10);
+
+    let filter = { error: true };
+    if (search) {
+      const userFilter = { name: { $regex: search, $options: 'i' } };
+      const users = await User.find(userFilter).select('_id').lean();
+      const userIds = users.map(user => user._id.toString());
+
+      const matchingMessages = await Message.find({ text: { $regex: search, $options: 'i' } }).select('messageId').lean();
+      const matchingMessageIds = matchingMessages.map(msg => msg.messageId);
+
+      filter.$or = [
+        { text: { $regex: search, $options: 'i' } },
+        { user: { $in: userIds } },
+        { parentMessageId: { $in: matchingMessageIds } }
+      ];
+    }
+
+    const total = await Message.countDocuments(filter);
+    const messages = await Message.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((pageNumber - 1) * limitNumber)
+      .limit(limitNumber)
+      .lean();
+
+    const messagesWithPrior = await Promise.all(messages.map(async (msg) => {
+      const priorMessage = await Message.findOne({
+        conversationId: msg.conversationId,
+        createdAt: { $lt: msg.createdAt }
+      }).sort({ createdAt: -1 }).select('text').lean();
+      return { ...msg, priorMessage: priorMessage?.text || null };
+    }));
+
+    const allUserIds = [...new Set(messagesWithPrior.map((msg) => msg.user))];
+    const allUsers = await User.find({ _id: { $in: allUserIds } }).select('_id name').lean();
+    const userMap = allUsers.reduce((map, user) => {
+      map[user._id.toString()] = user.name;
+      return map;
+    }, {});
+
+    const messagesWithUsernames = messagesWithPrior.map((msg) => ({
+      ...msg,
+      username: userMap[msg.user] || 'Unknown',
+    }));
+
+    res.status(200).json({ messages: messagesWithUsernames, total });
+  } catch (error) {
+    logger.error('Error fetching error messages:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {
