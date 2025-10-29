@@ -4,61 +4,128 @@ import * as endpoints from './api-endpoints';
 import { setTokenHeader } from './headers-helpers';
 import type * as t from './types';
 
+// In-flight de-duplication to prevent duplicate concurrent requests
+const inflightRequests = new Map<string, Promise<any>>();
+const makeKey = (method: string, url: string, data?: any, options?: AxiosRequestConfig) => {
+  const payload = data != null ? JSON.stringify(data) : '';
+  const params = options?.params ? JSON.stringify(options.params) : '';
+  return `${method}::${url}::${payload}::${params}`;
+};
+
 async function _get<T>(url: string, options?: AxiosRequestConfig): Promise<T> {
-  const response = await axios.get(url, { ...options });
-  return response.data;
+  const key = makeKey('GET', url, undefined, options);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key) as Promise<T>;
+  }
+  const req = axios.get<T>(url, { ...options }).then((r: any) => r.data).finally(() => {
+    inflightRequests.delete(key);
+  });
+  inflightRequests.set(key, req);
+  return req as Promise<T>;
 }
 
 async function _getResponse<T>(url: string, options?: AxiosRequestConfig): Promise<T> {
-  return await axios.get(url, { ...options });
+  const key = makeKey('GET_RESPONSE', url, undefined, options);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key) as Promise<T>;
+  }
+  const req = axios.get(url, { ...options }).finally(() => {
+    inflightRequests.delete(key);
+  });
+  inflightRequests.set(key, req);
+  return req as Promise<T>;
 }
 
 async function _post(url: string, data?: any) {
-  const response = await axios.post(url, JSON.stringify(data), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-  return response.data;
+  const key = makeKey('POST', url, data);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key);
+  }
+  const req = axios
+    .post(url, JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } })
+    .then((r) => r.data)
+    .finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req;
 }
 
 async function _postMultiPart(url: string, formData: FormData, options?: AxiosRequestConfig) {
-  const response = await axios.post(url, formData, {
-    ...options,
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return response.data;
+  const key = makeKey('POST_MULTIPART', url, Array.from(formData.entries()), options);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key);
+  }
+  const req = axios
+    .post(url, formData, { ...options, headers: { 'Content-Type': 'multipart/form-data' } })
+    .then((r) => r.data)
+    .finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req;
 }
 
 async function _postTTS(url: string, formData: FormData, options?: AxiosRequestConfig) {
-  const response = await axios.post(url, formData, {
-    ...options,
-    headers: { 'Content-Type': 'multipart/form-data' },
-    responseType: 'arraybuffer',
-  });
-  return response.data;
+  const key = makeKey('POST_TTS', url, Array.from(formData.entries()), options);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key);
+  }
+  const req = axios
+    .post(url, formData, {
+      ...options,
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'arraybuffer',
+    })
+    .then((r) => r.data)
+    .finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req;
 }
 
 async function _put(url: string, data?: any) {
-  const response = await axios.put(url, JSON.stringify(data), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-  return response.data;
+  const key = makeKey('PUT', url, data);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key);
+  }
+  const req = axios
+    .put(url, JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } })
+    .then((r) => r.data)
+    .finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req;
 }
 
 async function _delete<T>(url: string): Promise<T> {
-  const response = await axios.delete(url);
-  return response.data;
+  const key = makeKey('DELETE', url);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key) as Promise<T>;
+  }
+  const req = axios.delete(url).then((r) => r.data).finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req as Promise<T>;
 }
 
 async function _deleteWithOptions<T>(url: string, options?: AxiosRequestConfig): Promise<T> {
-  const response = await axios.delete(url, { ...options });
-  return response.data;
+  const key = makeKey('DELETE_OPT', url, undefined, options);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key) as Promise<T>;
+  }
+  const req = axios
+    .delete(url, { ...options })
+    .then((r) => r.data)
+    .finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req as Promise<T>;
 }
 
 async function _patch(url: string, data?: any) {
-  const response = await axios.patch(url, JSON.stringify(data), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-  return response.data;
+  const key = makeKey('PATCH', url, data);
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key);
+  }
+  const req = axios
+    .patch(url, JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } })
+    .then((r) => r.data)
+    .finally(() => inflightRequests.delete(key));
+  inflightRequests.set(key, req);
+  return req;
 }
 
 let isRefreshing = false;
@@ -134,7 +201,18 @@ axios.interceptors.response.use(
             `Refresh token failed from shared link, attempting request to ${originalRequest.url}`,
           );
         } else {
-          window.location.href = '/login';
+          // Only redirect to login if we're not on admin pages or if it's a critical auth endpoint
+          const isAdminPage = window.location.pathname.includes('/admin');
+          const isCriticalAuthEndpoint = originalRequest.url?.includes('/api/auth/') || 
+                                       originalRequest.url?.includes('/api/user');
+          
+          if (!isAdminPage || isCriticalAuthEndpoint) {
+            console.warn('Token refresh failed, redirecting to login');
+            window.location.href = '/login';
+          } else {
+            console.warn('Token refresh failed on admin page, but not redirecting to prevent chat disruption');
+            // Don't redirect on admin pages to prevent chat regeneration
+          }
         }
       } catch (err) {
         processQueue(err as AxiosError, null);
