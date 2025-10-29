@@ -149,11 +149,11 @@
     "csv-stringify": "^6.6.0",
     "dedent": "^1.6.0",
     "event-source-polyfill": "^1.0.31",
+    "install": "^0.13.0",
     "ioredis": "^5.7.0",
     "lodash": "^4.17.21",
     "lucide-react": "^0.541.0",
     "moment": "^2.30.1",
-    "papaparse": "^5.5.3",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.6.6"
   }
