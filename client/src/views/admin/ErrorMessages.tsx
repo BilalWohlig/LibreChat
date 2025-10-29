@@ -10,7 +10,7 @@ import { Pagination } from '~/components/ui/Pagination';
 import { Button } from '~/components/ui/Button';
 
 // Icons
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Download } from 'lucide-react';
 
 // Import the custom hook and types
 import { useErrorMessages, type ErrorMessage } from './useErrorMessages';
@@ -22,6 +22,8 @@ const ErrorMessagesView: React.FC = () => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const limit = 10;
   const { messages, total, loading, error, refetch } = useErrorMessages(limit, page, debouncedSearch);
@@ -77,6 +79,46 @@ const ErrorMessagesView: React.FC = () => {
       }
     } catch (_) {}
     navigate('/c/new');
+  };
+
+  const handleExport = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setExportError('No authentication token found');
+      return;
+    }
+    setExporting(true);
+    setExportError(null);
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const params = new URLSearchParams();
+      if (debouncedSearch && debouncedSearch.trim()) {
+        params.append('search', debouncedSearch.trim());
+      }
+
+      const response = await fetch(`${API_BASE}/api/messages/errors/export?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to export: ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `error_messages-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export error:', err);
+      setExportError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const columns = useMemo(
@@ -138,6 +180,16 @@ const ErrorMessagesView: React.FC = () => {
           </Button>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Error Messages</h1>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          disabled={exporting || loading}
+          className="flex items-center gap-2"
+        >
+          <Download className="h-4 w-4" />
+          {exporting ? 'Exporting...' : 'Export'}
+        </Button>
       </div>
 
       <div className="flex w-full gap-2">
@@ -154,6 +206,15 @@ const ErrorMessagesView: React.FC = () => {
           <span>{error}</span>
           <Button variant="outline" size="sm" onClick={refetch}>
             Retry
+          </Button>
+        </div>
+      )}
+
+      {exportError && (
+        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700 dark:bg-red-900 dark:text-red-300">
+          <span>{exportError}</span>
+          <Button variant="outline" size="sm" onClick={() => setExportError(null)}>
+            Dismiss
           </Button>
         </div>
       )}

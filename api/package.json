@@ -96,6 +96,7 @@
     "openai": "^4.96.2",
     "openai-chat-tokens": "^0.2.8",
     "openid-client": "^6.5.0",
+    "papaparse": "^5.4.1",
     "passport": "^0.6.0",
     "passport-apple": "^2.0.2",
     "passport-discord": "^0.1.4",
