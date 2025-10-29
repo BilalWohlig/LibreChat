@@ -13,7 +13,7 @@ import { Button } from '~/components/ui/Button';
 import { ArrowLeft, Download } from 'lucide-react';
 
 // Import the custom hook and types
-import { useErrorMessages, type ErrorMessage } from './useErrorMessages';
+import { useErrorMessages, type ErrorMessage } from './UseErrorMessages';
 
 const ErrorMessagesView: React.FC = () => {
   const navigate = useNavigate();
