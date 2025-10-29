@@ -23,9 +23,9 @@ export const useGetUserBalance = (
 ): QueryObserverResult<t.TBalanceResponse> => {
   const queriesEnabled = useRecoilValue<boolean>(store.queriesEnabled);
   return useQuery<t.TBalanceResponse>([QueryKeys.balance], () => dataService.getUserBalance(), {
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
     ...config,
     enabled: (config?.enabled ?? true) === true && queriesEnabled,
   });
