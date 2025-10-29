@@ -78,8 +78,14 @@ const useNavigateToConvo = (index = 0) => {
         lastConversationSetup: conversation,
       });
     }
-    clearAllConversations(true);
-    queryClient.setQueryData([QueryKeys.messages, currentConvoId], []);
+    
+    // Only clear conversations if we're actually switching to a different conversation
+    // Don't clear if we're just navigating back to the same conversation
+    if (currentConvoId !== convo.conversationId) {
+      clearAllConversations(true);
+      queryClient.setQueryData([QueryKeys.messages, currentConvoId], []);
+    }
+    
     if (convo.conversationId !== Constants.NEW_CONVO && convo.conversationId) {
       queryClient.invalidateQueries([QueryKeys.conversation, convo.conversationId]);
       fetchFreshData(convo);
