@@ -39,14 +39,38 @@ export default function useChatHelpers(index = 0, paramId?: string) {
   );
 
   const setMessages = useCallback(
-    (messages: TMessage[]) => {
-      queryClient.setQueryData<TMessage[]>([QueryKeys.messages, queryParam], messages);
-      if (queryParam === 'new' && conversationId && conversationId !== 'new') {
-        queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], messages);
-      }
-    },
-    [queryParam, queryClient, conversationId],
-  );
+  (messages: TMessage[]) => {
+    // Extract conversationId from the messages themselves (most reliable source)
+    const messageConvoId = messages.length > 0 ? messages[0]?.conversationId : null;
+    
+    // Use message's conversationId if available, otherwise fall back to current state
+    const targetConvoId = messageConvoId && messageConvoId !== 'new' 
+      ? messageConvoId 
+      : queryParam;
+    
+    console.log('📝 setMessages:', {
+      messageConvoId,
+      queryParam,
+      conversationId,
+      targetConvoId,
+      messageCount: messages.length,
+    });
+    
+    // Write to the primary cache key
+    queryClient.setQueryData<TMessage[]>([QueryKeys.messages, targetConvoId], messages);
+    
+    // Also write to conversationId if it's different and valid
+    if (conversationId && conversationId !== 'new' && conversationId !== targetConvoId) {
+      queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], messages);
+    }
+    
+    // Also write to 'new' if target is a real convo ID (for backward compatibility)
+    if (targetConvoId !== 'new' && queryParam === 'new') {
+      queryClient.setQueryData<TMessage[]>([QueryKeys.messages, 'new'], messages);
+    }
+  },
+  [queryParam, queryClient, conversationId],
+);
 
   const getMessages = useCallback(() => {
     return queryClient.getQueryData<TMessage[]>([QueryKeys.messages, queryParam]);

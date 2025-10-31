@@ -20,6 +20,9 @@ import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import store from '~/store';
 
+/* -------------------- GLOBAL MAP FOR BACKGROUND STREAMS -------------------- */
+const globalSSEMap = new Map<string, InstanceType<typeof SSE>>();
+
 const clearDraft = (conversationId?: string | null) => {
   if (conversationId) {
     localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${conversationId}`);
@@ -93,32 +96,41 @@ export default function useSSE(
     enabled: !!isAuthenticated && startupConfig?.balance?.enabled,
   });
 
-  // Separate effect to handle explicit stop (when submission becomes null)
+  /* -------------------- EXPLICIT STOP HANDLER -------------------- */
   useEffect(() => {
+    // Only stop explicitly if user cancels, not on navigation
     if (submission === null && activeSSE) {
-      console.log('Explicit stop detected - closing SSE connection');
-
-      // Close the SSE connection
-      if (activeSSE.readyState === 1) {
-        // OPEN state
-        activeSSE.close();
-      }
-
-      // Simply close the connection without calling abortConversation
-      // The cleanup will be handled by the navigation
-      setActiveSSE(null);
+      console.log('Explicit stop detected - leaving background stream intact');
+      // Do NOT close activeSSE here — allow background streaming
       setIsSubmitting(false);
     }
   }, [submission, activeSSE, setIsSubmitting]);
 
+  /* -------------------- MAIN SSE EFFECT -------------------- */
   useEffect(() => {
     if (submission == null || Object.keys(submission).length === 0) {
       return;
     }
 
-    // Prevent SSE reconnection if we're navigating back from admin pages
-    // Check if there's already an active SSE connection for this submission
-    const submissionKey = `activeSSE_${submission.userMessage?.messageId || submission.conversation?.conversationId}`;
+    const conversationId = submission.conversation?.conversationId ?? '';
+
+    // **CRITICAL FIX: CAPTURE ROUTE IMMEDIATELY WHEN SUBMISSION STARTS**
+    const submissionStartRoute = {
+      pathname: window.location.pathname,
+      conversationId: conversationId,
+      timestamp: Date.now(),
+    };
+    console.log('📍 Submission started at route:', submissionStartRoute);
+
+    /* -------- Check for existing background stream -------- */
+    const existingSSE = globalSSEMap.get(conversationId);
+    if (existingSSE && existingSSE.readyState === 1) {
+      console.log('Reusing active background SSE stream for conversation', conversationId);
+      setActiveSSE(existingSSE);
+      return;
+    }
+
+    const submissionKey = `activeSSE_${submission.userMessage?.messageId || conversationId}`;
     const hasActiveSSE = localStorage.getItem(submissionKey) === 'true';
 
     if (hasActiveSSE && activeSSE) {
@@ -128,7 +140,6 @@ export default function useSSE(
 
     let { userMessage } = submission;
 
-    // FIXED: Add defensive check for userMessage
     if (!userMessage || !userMessage.messageId) {
       console.warn('SSE: Invalid submission - missing userMessage or messageId');
       setIsSubmitting(false);
@@ -144,78 +155,57 @@ export default function useSSE(
     let textIndex = null;
     let isExplicitStop = false;
 
-    // Prevent duplicate SSE streams for the same response/message id
-    const sseKey = `sse_${submission.initialResponse?.messageId || submission.userMessage?.messageId || ''}`;
+    const sseKey = `sse_${submission.initialResponse?.messageId || userMessage?.messageId || ''}`;
     if (sseKey && localStorage.getItem(sseKey) === 'open') {
       console.log('SSE: Stream already open for this message');
       return;
     }
 
-    // CRITICAL CHECK: Verify response doesn't already exist
-    // This prevents regeneration when returning from admin pages after completion
     const currentMessages = getMessages();
     if (currentMessages && currentMessages.length > 0) {
       const responseId = submission.initialResponse?.messageId;
       const userMsgId = userMessage.messageId;
-      
-      // Check if this message was already completed (in the completed Set)
+
       if (responseId && completed.has(responseId)) {
-        console.log('SSE: Message already in completed set, clearing submission to prevent regeneration', {
-          responseId,
-          userMsgId,
-          conversationId: submission.conversation?.conversationId,
-        });
+        console.log('SSE: Message already completed, skipping regeneration');
         setSubmission(null);
         setIsSubmitting(false);
         return;
       }
-      
-      // Check if a COMPLETED response already exists for this user message
+
       const responseExists = currentMessages.some((msg) => {
-        // Skip if this is the current user message
         if (msg.messageId === userMsgId) return false;
-        
-        // Skip placeholder responses (messageId ends with underscore and no real content)
         const isPlaceholder = msg.messageId?.endsWith('_') && (!msg.text || msg.text.length === 0);
         if (isPlaceholder) return false;
-        
-        // Check if this is a completed response to our user message
         if (msg.parentMessageId === userMsgId && !msg.isCreatedByUser) {
-          // Only count as existing if it has actual content AND is not marked as unfinished
           const hasContent = msg.text && msg.text.length > 0;
           const isFinished = !msg.unfinished;
           return hasContent && isFinished;
         }
-        
         return false;
       });
-      
+
       if (responseExists) {
-        console.log('SSE: Completed response already exists, clearing submission to prevent regeneration', {
-          responseId,
-          userMsgId,
-          conversationId: submission.conversation?.conversationId,
-        });
-        // Clear submission from Recoil to prevent retrigger
+        console.log('SSE: Completed response already exists, preventing retrigger');
         setSubmission(null);
         setIsSubmitting(false);
         return;
       }
     }
 
+    /* -------------------- CREATE AND STREAM SSE -------------------- */
     const sse = new SSE(payloadData.server, {
       payload: JSON.stringify(payload),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
 
-    // Store metadata on SSE instance for tracking
     (sse as any)._submissionMeta = {
       userMessageId: userMessage.messageId,
-      conversationId: submission.conversation?.conversationId,
+      conversationId,
     };
 
-    // Store the SSE instance so the explicit stop effect can access it
     setActiveSSE(sse);
+    globalSSEMap.set(conversationId, sse);
 
     sse.addEventListener('attachment', (e: MessageEvent) => {
       try {
@@ -232,23 +222,28 @@ export default function useSSE(
       const data = JSON.parse(e.data);
 
       if (data.final != null) {
-        // Clear localStorage flags FIRST before any handlers
-        // This ensures cleanup happens even if finalHandler early-returns
         localStorage.removeItem(submissionKey);
         localStorage.removeItem(sseKey);
-        console.log('SSE: Final message received, cleared flags', { submissionKey, sseKey });
-        
-        // Clear submission tracking info on SSE instance
-        (sse as any)._submissionMeta = null;
+        console.log('SSE: Final message received, cleared flags');
 
-        clearDraft(submission.conversation?.conversationId);
+        (sse as any)._submissionMeta = null;
+        clearDraft(conversationId);
         const { plugins } = data;
-        finalHandler(data, { ...submission, plugins } as EventSubmission);
-        (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
         
-        // CRITICAL FIX: Clear submission after final message to prevent retriggering on tab switch
+        // **PASS THE CAPTURED ROUTE TO finalHandler**
+        finalHandler(data, { 
+          ...submission, 
+          plugins,
+          _submissionRoute: submissionStartRoute  // <-- CRITICAL: Pass captured route
+        } as EventSubmission);
+        
+        (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
+
+        // Mark as completed and clear submission
         setSubmission(null);
-        console.log('SSE: Cleared submission after final message to prevent retriggering');
+        setIsSubmitting(false);
+        globalSSEMap.delete(conversationId);
+        console.log('SSE: Cleared submission after final message');
         return;
       } else if (data.created != null) {
         const runId = v4();
@@ -258,32 +253,35 @@ export default function useSSE(
           ...data.message,
           overrideParentMessageId: userMessage?.overrideParentMessageId,
         };
-
-        createdHandler(data, { ...submission, userMessage } as EventSubmission);
+        createdHandler(data, { 
+          ...submission, 
+          userMessage,
+          _submissionRoute: submissionStartRoute  // <-- Also pass to createdHandler
+        } as EventSubmission);
       } else if (data.event != null) {
         stepHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.sync != null) {
         const runId = v4();
         setActiveRunId(runId);
-        /* synchronize messages to Assistants API as well as with real DB ID's */
-        syncHandler(data, { ...submission, userMessage } as EventSubmission);
+        syncHandler(data, { 
+          ...submission, 
+          userMessage,
+          _submissionRoute: submissionStartRoute  // <-- Also pass to syncHandler
+        } as EventSubmission);
       } else if (data.type != null) {
         const { text, index } = data;
         if (text != null && index !== textIndex) {
           textIndex = index;
         }
-
         contentHandler({ data, submission: submission as EventSubmission });
       } else {
         const text = data.text ?? data.response;
         const { plugin, plugins } = data;
-
         const initialResponse = {
           ...(submission.initialResponse as TMessage),
           parentMessageId: data.parentMessageId,
           messageId: data.messageId,
         };
-
         if (data.message != null) {
           messageHandler(text, { ...submission, plugin, plugins, userMessage, initialResponse });
         }
@@ -292,8 +290,7 @@ export default function useSSE(
 
     sse.addEventListener('open', () => {
       setAbortScroll(false);
-      console.log('connection is opened');
-      // Mark this SSE connection as active
+      console.log('SSE: connection opened');
       localStorage.setItem(submissionKey, 'true');
       if (sseKey) {
         localStorage.setItem(sseKey, 'open');
@@ -301,7 +298,7 @@ export default function useSSE(
     });
 
     sse.addEventListener('cancel', async () => {
-      const streamKey = (submission as TSubmission | null)?.['initialResponse']?.messageId;
+      const streamKey = submission?.initialResponse?.messageId;
       if (completed.has(streamKey)) {
         setIsSubmitting(false);
         setCompleted((prev) => {
@@ -313,53 +310,38 @@ export default function useSSE(
 
       setCompleted((prev) => new Set(prev.add(streamKey)));
       const latestMessages = getMessages();
-      const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
+      const convoId =
+        latestMessages?.[latestMessages.length - 1]?.conversationId ?? conversationId;
 
-      // Always abort when the cancel event is received from SSE stream
       isExplicitStop = true;
-      return await abortConversation(
-        conversationId ??
-          userMessage?.conversationId ??
-          submission.conversation?.conversationId ??
-          '',
-        submission as EventSubmission,
-        latestMessages,
-      );
+      return await abortConversation(convoId, submission as EventSubmission, latestMessages);
     });
 
     sse.addEventListener('error', async (e: MessageEvent) => {
       /* @ts-ignore */
       if (e.responseCode === 401) {
-        /* token expired, refresh and retry */
         try {
           const refreshResponse = await request.refreshToken();
           const token = refreshResponse?.token ?? '';
-          if (!token) {
-            throw new Error('Token refresh failed.');
-          }
+          if (!token) throw new Error('Token refresh failed.');
           sse.headers = {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           };
-
           request.dispatchTokenUpdatedEvent(token);
           sse.stream();
           return;
         } catch (error) {
-          /* token refresh failed, continue handling the original 401 */
           console.log('SSE token refresh failed:', error);
-          // Don't automatically redirect on SSE 401 errors to prevent chat disruption
         }
       }
 
-      console.log('error in server stream.');
+      console.log('SSE: error in server stream.');
       (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
-      
-      // Clear localStorage flags on error
       localStorage.removeItem(submissionKey);
       localStorage.removeItem(sseKey);
 
-      let data: TResData | undefined = undefined;
+      let data: TResData | undefined;
       try {
         data = JSON.parse(e.data) as TResData;
       } catch (error) {
@@ -367,29 +349,26 @@ export default function useSSE(
         console.log(e);
         setIsSubmitting(false);
       }
-
       errorHandler({ data, submission: { ...submission, userMessage } as EventSubmission });
+      globalSSEMap.delete(conversationId);
     });
 
     setIsSubmitting(true);
     sse.stream();
 
+    /* -------------------- CLEANUP ON UNMOUNT -------------------- */
     return () => {
-      // This cleanup handles navigation away - we don't want to abort the backend
-      if (sse.readyState === 2) {
-        // CLOSED state - connection already closed
-        // Flags are already cleared by final/error handlers
+      // Keep stream alive for background generation
+      if (conversationId && sse.readyState === 1) {
+        globalSSEMap.set(conversationId, sse);
+        console.log(`SSE background streaming preserved for conversation ${conversationId}`);
         return;
       }
 
-      // For navigation away while streaming, KEEP the localStorage flags
-      // This prevents duplicate connections when user returns
-      // The flags will be cleared when the stream completes or errors
-      console.log(
-        'SSE cleanup: Navigation detected - keeping flags to prevent duplicate on return',
-      );
-      setActiveSSE(null);
-      // DO NOT clear localStorage flags here - let completion/error handlers do it
+      // Cleanup fully closed or errored SSEs
+      if (sse.readyState === 2) {
+        globalSSEMap.delete(conversationId);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submission]);
