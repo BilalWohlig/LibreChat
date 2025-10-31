@@ -216,7 +216,7 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const {
         messages,
         userMessage,
@@ -227,13 +227,13 @@ export default function useEventHandlers({
       } = submission;
       const text = data ?? '';
       setIsSubmitting(true);
-  
+
       const currentTime = Date.now();
       if (currentTime - lastAnnouncementTimeRef.current > MESSAGE_UPDATE_INTERVAL) {
         announcePolite({ message: 'composing', isStatus: true });
         lastAnnouncementTimeRef.current = currentTime;
       }
-  
+
       if (isRegenerate) {
         setMessages([
           ...messages,
@@ -259,7 +259,6 @@ export default function useEventHandlers({
     },
     [setMessages, announcePolite, setIsSubmitting],
   );
-  
 
   const cancelHandler = useCallback(
     (data: TResData, submission: EventSubmission) => {
@@ -267,12 +266,12 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const { requestMessage, responseMessage, conversation } = data;
       const { messages, isRegenerate = false } = submission;
       const convoUpdate =
         (conversation as TConversation | null) ?? (submission.conversation as TConversation);
-  
+
       // update the messages
       if (isRegenerate) {
         const messagesUpdate = (
@@ -285,26 +284,26 @@ export default function useEventHandlers({
         ).filter((msg) => msg);
         setMessages(messagesUpdate as TMessage[]);
       }
-  
+
       const isNewConvo = conversation.conversationId !== submission.conversation.conversationId;
       if (isNewConvo) {
         removeConvoFromAllQueries(queryClient, submission.conversation.conversationId as string);
       }
-  
+
       // refresh title
       if (genTitle && isNewConvo && requestMessage.parentMessageId === Constants.NO_PARENT) {
         setTimeout(() => {
           genTitle.mutate({ conversationId: convoUpdate.conversationId as string });
         }, 2500);
       }
-  
+
       if (setConversation && !isAddedRequest) {
         setConversation((prevState) => {
           const update = { ...prevState, ...convoUpdate };
           return update;
         });
       }
-  
+
       setIsSubmitting(false);
     },
     [setMessages, setConversation, genTitle, isAddedRequest, queryClient, setIsSubmitting],
@@ -316,11 +315,11 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const { conversationId, thread_id, responseMessage, requestMessage } = data;
       const { initialResponse, messages: _messages, userMessage } = submission;
       const messages = _messages.filter((msg) => msg.messageId !== userMessage.messageId);
-  
+
       setMessages([
         ...messages,
         requestMessage,
@@ -329,12 +328,12 @@ export default function useEventHandlers({
           ...responseMessage,
         },
       ]);
-  
+
       announcePolite({
         message: 'start',
         isStatus: true,
       });
-  
+
       let update = {} as TConversation;
       if (setConversation && !isAddedRequest) {
         setConversation((prevState) => {
@@ -354,7 +353,7 @@ export default function useEventHandlers({
           }) as TConversation;
           return update;
         });
-  
+
         if (requestMessage.parentMessageId === Constants.NO_PARENT) {
           addConvoToAllQueries(queryClient, update);
         } else {
@@ -371,7 +370,7 @@ export default function useEventHandlers({
           return update;
         });
       }
-  
+
       setShowStopButton(true);
       if (resetLatestMessage) {
         resetLatestMessage();
@@ -395,27 +394,27 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const { messages, userMessage, isRegenerate = false, isTemporary = false } = submission;
       const initialResponse = {
         ...submission.initialResponse,
         parentMessageId: userMessage.messageId,
         messageId: userMessage.messageId + '_',
       };
-      
+
       if (isRegenerate) {
         setMessages([...messages, initialResponse]);
       } else {
         setMessages([...messages, userMessage, initialResponse]);
       }
-  
+
       const { conversationId, parentMessageId } = userMessage;
       lastAnnouncementTimeRef.current = Date.now();
       announcePolite({
         message: 'start',
         isStatus: true,
       });
-  
+
       let update = {} as TConversation;
       if (conversationId) {
         applyAgentTemplate(conversationId, submission.conversation.conversationId);
@@ -436,7 +435,7 @@ export default function useEventHandlers({
           }) as TConversation;
           return update;
         });
-  
+
         if (!isTemporary) {
           if (parentMessageId === Constants.NO_PARENT) {
             addConvoToAllQueries(queryClient, update);
@@ -453,7 +452,7 @@ export default function useEventHandlers({
           return update;
         });
       }
-  
+
       if (resetLatestMessage) {
         resetLatestMessage();
       }
@@ -480,7 +479,7 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const { requestMessage, responseMessage, conversation, runMessages } = data;
       const {
         messages,
@@ -488,21 +487,22 @@ export default function useEventHandlers({
         isRegenerate = false,
         isTemporary = false,
       } = submission;
-  
+
       setShowStopButton(false);
       setCompleted((prev) => new Set(prev.add(submission.initialResponse.messageId)));
-  
+
       const currentMessages = getMessages();
       /* Early return if messages are empty; i.e., the user navigated away */
       if (!currentMessages || currentMessages.length === 0) {
+        console.log('❌ Navigation prevented - user navigated away (no messages)');
         setIsSubmitting(false);
         return;
       }
-  
+
       /* a11y announcements */
       announcePolite({ message: 'end', isStatus: true });
       announcePolite({ message: getAllContentText(responseMessage) });
-  
+
       /* Update messages; if assistants endpoint, client doesn't receive responseMessage */
       let finalMessages: TMessage[] = [];
       if (runMessages) {
@@ -527,12 +527,12 @@ export default function useEventHandlers({
           [...currentMessages],
         );
       }
-  
+
       const isNewConvo = conversation.conversationId !== submissionConvo.conversationId;
       if (isNewConvo) {
         removeConvoFromAllQueries(queryClient, submissionConvo.conversationId as string);
       }
-  
+
       /* Refresh title */
       if (
         genTitle &&
@@ -545,7 +545,7 @@ export default function useEventHandlers({
           genTitle.mutate({ conversationId: conversation.conversationId as string });
         }, 2500);
       }
-  
+
       if (setConversation && isAddedRequest !== true) {
         setConversation((prevState) => {
           const update = {
@@ -564,11 +564,30 @@ export default function useEventHandlers({
           }
           return update;
         });
-        if (location.pathname === '/c/new') {
-          navigate(`/c/${conversation.conversationId}`, { replace: true });
+
+        // **ULTIMATE FIX: Use route captured at submission time from useSSE.ts**
+        const submissionRoute = (submission as any)._submissionRoute;
+        const currentPathname = window.location.pathname;
+
+        console.log('=== NAVIGATION CHECK ===');
+        console.log('Route when submitted:', submissionRoute?.pathname);
+        console.log('Current route:', currentPathname);
+        console.log('Time elapsed:', submissionRoute ? Date.now() - submissionRoute.timestamp : 'N/A', 'ms');
+
+        // **CRITICAL: Only navigate if user is STILL on the exact same route**
+        if (submissionRoute && submissionRoute.pathname === currentPathname) {
+          // Also check if it was /c/new
+          if (submissionRoute.pathname === '/c/new') {
+            console.log('✅ NAVIGATING to:', `/c/${conversation.conversationId}`);
+            navigate(`/c/${conversation.conversationId}`, { replace: true });
+          } else {
+            console.log('❌ Not navigating - original route was not /c/new');
+          }
+        } else {
+          console.log('❌ Navigation prevented - user moved from', submissionRoute?.pathname, 'to', currentPathname);
         }
       }
-  
+
       setIsSubmitting(false);
     },
     [
@@ -582,7 +601,6 @@ export default function useEventHandlers({
       setIsSubmitting,
       setMessages,
       queryClient,
-      location.pathname,
       navigate,
     ],
   );
@@ -595,33 +613,33 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const { messages, userMessage, initialResponse } = submission;
-      
+
       // CRITICAL FIX: Check if initialResponse exists before accessing messageId
       if (!initialResponse || !initialResponse.messageId) {
         console.error('errorHandler: initialResponse or messageId is undefined', { submission });
         setIsSubmitting(false);
         return;
       }
-      
+
       if (!userMessage || !userMessage.messageId) {
         console.error('errorHandler: userMessage or messageId is undefined', { submission });
         setIsSubmitting(false);
         return;
       }
-  
+
       setCompleted((prev) => new Set(prev.add(initialResponse.messageId)));
-  
+
       const conversationId =
         userMessage.conversationId ?? submission.conversation?.conversationId ?? '';
-  
+
       const setErrorMessages = (convoId: string, errorMessage: TMessage) => {
         const finalMessages: TMessage[] = [...messages, userMessage, errorMessage];
         setMessages(finalMessages);
         queryClient.setQueryData<TMessage[]>([QueryKeys.messages, convoId], finalMessages);
       };
-  
+
       const parseErrorResponse = (data: TResData | Partial<TMessage>) => {
         const metadata = data['responseMessage'] ?? data;
         const errorMessage: Partial<TMessage> = {
@@ -630,14 +648,14 @@ export default function useEventHandlers({
           error: true,
           parentMessageId: userMessage.messageId,
         };
-  
+
         if (errorMessage.messageId === undefined || errorMessage.messageId === '') {
           errorMessage.messageId = v4();
         }
-  
+
         return tMessageSchema.parse(errorMessage);
       };
-  
+
       if (!data) {
         const convoId = conversationId || `_${v4()}`;
         const errorMetadata = parseErrorResponse({
@@ -660,7 +678,7 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const receivedConvoId = data.conversationId ?? '';
       if (!conversationId && !receivedConvoId) {
         const convoId = `_${v4()}`;
@@ -680,13 +698,13 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       const errorResponse = tMessageSchema.parse({
         ...data,
         error: true,
         parentMessageId: userMessage.messageId,
       });
-  
+
       setErrorMessages(receivedConvoId, errorResponse);
       if (receivedConvoId && paramId === Constants.NEW_CONVO && newConversation) {
         newConversation({
@@ -694,7 +712,7 @@ export default function useEventHandlers({
           preset: tPresetSchema.parse(submission.conversation),
         });
       }
-  
+
       setIsSubmitting(false);
       return;
     },
@@ -715,45 +733,45 @@ export default function useEventHandlers({
       console.log('conversationId:', conversationId);
       console.log('submission:', submission);
       console.log('messages:', messages);
-      
+
       // CRITICAL FIX: Check if submission and required properties exist
       if (!submission) {
         console.error('abortConversation: submission is undefined');
         setIsSubmitting(false);
         return;
       }
-      
+
       if (!submission.conversation) {
         console.error('abortConversation: submission.conversation is undefined');
         setIsSubmitting(false);
         return;
       }
-      
+
       // Check messages array
       if (!messages || messages.length === 0) {
         console.warn('abortConversation: No messages to abort');
         setIsSubmitting(false);
         return;
       }
-      
+
       const lastMessage = messages[messages.length - 1];
       const secondLastMessage = messages.length > 1 ? messages[messages.length - 2] : null;
-      
+
       console.log('lastMessage:', lastMessage);
       console.log('secondLastMessage:', secondLastMessage);
-      
+
       // Safely build runAbortKey
       const lastMessageId = lastMessage?.messageId ?? '';
       const runAbortKey = `${conversationId}:${lastMessageId}`;
-      
+
       console.log('runAbortKey:', runAbortKey);
-      
+
       const { endpoint: _endpoint, endpointType } =
         (submission.conversation as TConversation | null) ?? {};
       const endpoint = endpointType ?? _endpoint;
-      
+
       console.log('endpoint:', endpoint);
-      
+
       if (
         !isAssistantsEndpoint(endpoint) &&
         lastMessage != null &&
@@ -761,7 +779,7 @@ export default function useEventHandlers({
       ) {
         let requestMessage = secondLastMessage;
         const responseMessage = lastMessage;
-        
+
         if (requestMessage.messageId !== responseMessage.parentMessageId) {
           // the request message is the parent of response, which we search for backwards
           for (let i = messages.length - 3; i >= 0; i--) {
@@ -771,7 +789,7 @@ export default function useEventHandlers({
             }
           }
         }
-        
+
         finalHandler(
           {
             conversation: {
@@ -795,7 +813,7 @@ export default function useEventHandlers({
         setIsSubmitting(false);
         return;
       }
-  
+
       try {
         const response = await fetch(`${EndpointURLs[endpoint ?? '']}/abort`, {
           method: 'POST',
@@ -808,7 +826,7 @@ export default function useEventHandlers({
             endpoint,
           }),
         });
-  
+
         // Check if the response is JSON
         const contentType = response.headers.get('content-type');
         if (contentType != null && contentType.includes('application/json')) {
@@ -834,22 +852,22 @@ export default function useEventHandlers({
         }
       } catch (error) {
         console.error('abortConversation error:', error);
-        
+
         // FIXED: Add defensive check before accessing userMessage
         if (!submission.userMessage) {
           console.error('abortConversation: submission.userMessage is undefined');
           setIsSubmitting(false);
           return;
         }
-        
+
         const errorResponse = createErrorMessage({
           getMessages,
           submission,
           error,
         });
-        
+
         setMessages([...submission.messages, submission.userMessage, errorResponse]);
-        
+
         if (newConversation) {
           newConversation({
             template: { conversationId: conversationId || errorResponse.conversationId || v4() },

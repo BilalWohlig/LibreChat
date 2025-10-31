@@ -128,19 +128,28 @@ const ErrorMessagesView: React.FC = () => {
         header: 'Sr. No.',
         meta: { size: '60px' },
         cell: ({ row }: any) => (
-          <span>{(page - 1) * limit + row.index + 1}</span>
+          <span className="text-gray-900 dark:text-gray-100">
+            {(page - 1) * limit + row.index + 1}
+          </span>
         ),
       },
       {
         header: 'User',
         accessorKey: 'username',
         meta: { size: '150px' },
+        cell: ({ row }: any) => (
+          <span className="text-gray-900 dark:text-gray-100">
+            {row.original.username}
+          </span>
+        ),
       },
       {
         header: 'Message',
         accessorKey: 'priorMessage',
         cell: ({ row }: any) => (
-          <span className="whitespace-normal">{row.original.priorMessage}</span>
+          <span className="whitespace-normal text-gray-900 dark:text-gray-100">
+            {row.original.priorMessage}
+          </span>
         ),
       },
       {
@@ -156,7 +165,11 @@ const ErrorMessagesView: React.FC = () => {
           } catch (e) {
             // Not a JSON string
           }
-          return <span className="whitespace-normal">{message}</span>;
+          return (
+            <span className="whitespace-normal text-gray-900 dark:text-gray-100">
+              {message}
+            </span>
+          );
         },
       },
       {
@@ -164,7 +177,9 @@ const ErrorMessagesView: React.FC = () => {
         accessorKey: 'createdAt',
         meta: { size: '180px' },
         cell: ({ row }: any) => (
-          <span>{moment(row.original.createdAt).format('MMM DD, YYYY h:mm A')}</span>
+          <span className="text-gray-900 dark:text-gray-100">
+            {moment(row.original.createdAt).format('MMM DD, YYYY h:mm A')}
+          </span>
         ),
       },
     ],
@@ -172,13 +187,16 @@ const ErrorMessagesView: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
+    <div className="flex h-full flex-col gap-4 p-4 bg-white dark:bg-gray-900">
+      {/* Header */}
       <div className="mb-3 flex items-center justify-between border-b border-gray-200 pb-3 dark:border-gray-700">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={handleGoBack} className="rounded-full">
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-5 w-5 text-gray-700 dark:text-gray-300" />
           </Button>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Error Messages</h1>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+            Error Messages
+          </h1>
         </div>
         <Button
           variant="outline"
@@ -192,6 +210,7 @@ const ErrorMessagesView: React.FC = () => {
         </Button>
       </div>
 
+      {/* Search Bar */}
       <div className="flex w-full gap-2">
         <SearchBar
           search={search}
@@ -201,8 +220,9 @@ const ErrorMessagesView: React.FC = () => {
         />
       </div>
 
+      {/* Error Messages */}
       {error && (
-        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700 dark:bg-red-900 dark:text-red-300">
+        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700 dark:bg-red-900/30 dark:text-red-300">
           <span>{error}</span>
           <Button variant="outline" size="sm" onClick={refetch}>
             Retry
@@ -211,7 +231,7 @@ const ErrorMessagesView: React.FC = () => {
       )}
 
       {exportError && (
-        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700 dark:bg-red-900 dark:text-red-300">
+        <div className="flex items-center justify-between rounded bg-red-100 p-2 text-red-700 dark:bg-red-900/30 dark:text-red-300">
           <span>{exportError}</span>
           <Button variant="outline" size="sm" onClick={() => setExportError(null)}>
             Dismiss
@@ -219,17 +239,24 @@ const ErrorMessagesView: React.FC = () => {
         </div>
       )}
 
-      <div ref={mainContainerRef} className="relative flex-1 min-h-0">
+      {/* Data Table Container */}
+      <div ref={mainContainerRef} className="relative flex-1 min-h-0 bg-white dark:bg-gray-900">
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50 dark:bg-gray-800 dark:bg-opacity-50 z-10">
-            <p>Loading...</p>
+          <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm z-10">
+            <p className="text-gray-900 dark:text-gray-100">Loading...</p>
           </div>
         )}
-        <div className="h-full overflow-auto">
-          <DataTable columns={columns} data={messages} showCheckboxes={false} onDelete={undefined} />
+        <div className="h-full overflow-auto bg-white dark:bg-gray-900">
+          <DataTable 
+            columns={columns} 
+            data={messages} 
+            showCheckboxes={false} 
+            onDelete={undefined} 
+          />
         </div>
       </div>
 
+      {/* Empty State */}
       {messages.length === 0 && !loading && (
         <div className="flex h-40 w-full items-center justify-center">
           <p className="text-gray-500 dark:text-gray-400">
@@ -238,6 +265,7 @@ const ErrorMessagesView: React.FC = () => {
         </div>
       )}
 
+      {/* Pagination */}
       <div className="flex-shrink-0">
         <Pagination
           page={page}
