@@ -33,23 +33,20 @@ describe('Integration latency (real API, Gemini 2.5 Flash)', () => {
         expect(replyWith.length).toBeGreaterThan(0);
 
         // Without thinkingBudget: direct SDK call (no thinkingConfig)
-        const { GoogleGenerativeAI } = require('@google/generative-ai');
-        const ai = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-        const req = {
-          model: 'gemini-2.5-flash',
-          contents: simpleContents,
-          generationConfig: { temperature: 0.2 },
-        };
+        const { GoogleGenAI } = require('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
 
         let firstWithout = null;
         const startWithout = Date.now();
-        const stream = await model.generateContentStream(req, { signal: ac2.signal });
+        const stream = await ai.models.generateContentStream({
+          model: 'gemini-2.5-flash',
+          contents: simpleContents,
+          config: { temperature: 0.2 },
+        });
         let chars = 0;
-        for await (const chunk of stream.stream) {
+        for await (const chunk of stream) {
           if (firstWithout == null) firstWithout = Date.now();
-          const t = chunk.text();
+          const t = chunk.text ?? '';
           chars += t.length;
         }
         const totalWithout = Date.now() - startWithout;

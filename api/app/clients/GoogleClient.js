@@ -3,7 +3,7 @@ const { Tokenizer } = require('@librechat/api');
 const { concat } = require('@langchain/core/utils/stream');
 const { ChatVertexAI } = require('@langchain/google-vertexai');
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
-const { GoogleGenerativeAI: GenAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
 const {
   googleGenConfigSchema,
@@ -673,10 +673,19 @@ class GoogleClient extends BaseClient {
       return client;
     } else if (!EXCLUDED_GENAI_MODELS.test(model)) {
       logger.debug('Creating GenAI client');
-      return new GenAI(this.apiKey).getGenerativeModel(
-        { model, ...clientOptions,},
-        requestOptions,
-      );
+      const genaiOptions = { apiKey: this.apiKey };
+      if (requestOptions?.baseUrl) {
+        genaiOptions.httpOptions = { baseUrl: requestOptions.baseUrl };
+      }
+      if (requestOptions?.customHeaders) {
+        genaiOptions.httpOptions = {
+          ...(genaiOptions.httpOptions || {}),
+          headers: requestOptions.customHeaders,
+        };
+      }
+      this.genaiClient = new GoogleGenAI(genaiOptions);
+      this.genaiModel = model;
+      return this.genaiClient;
     }
 
     logger.debug('Creating Chat Google Generative AI client');
@@ -711,33 +720,23 @@ class GoogleClient extends BaseClient {
     let error;
     try {
       if (!EXCLUDED_GENAI_MODELS.test(modelName) && !this.project_id) {
-        /** @type {GenerativeModel} */
-        const client = this.client;
-        /** @type {GenerateContentRequest} */
+        const promptPrefix = (this.systemMessage ?? '').trim();
+        const genConfig = googleGenConfigSchema.parse(this.modelOptions);
+
         const requestOptions = {
-          safetySettings,
+          model: this.genaiModel,
           contents: _payload,
-          generationConfig: {
-            ...googleGenConfigSchema.parse(this.modelOptions),
+          config: {
+            ...genConfig,
+            safetySettings,
+            ...(promptPrefix.length ? { systemInstruction: promptPrefix } : {}),
             ...(modelName.toLowerCase().includes('flash')
               ? { thinkingConfig: { thinkingBudget: 0 } }
               : {}),
           },
         };
 
-        const promptPrefix = (this.systemMessage ?? '').trim();
-        if (promptPrefix.length) {
-          requestOptions.systemInstruction = {
-            parts: [
-              {
-                text: promptPrefix,
-              },
-            ],
-          };
-        }
-
         const delay = modelName.includes('flash') ? 8 : 15;
-        /** @type {GenAIUsageMetadata} */
         let usageMetadata;
 
         abortController.signal.addEventListener(
@@ -757,22 +756,23 @@ class GoogleClient extends BaseClient {
           }
         }, timeoutMs);
 
-        const result = await client.generateContentStream(requestOptions, {
-          signal: abortController.signal,
-        });
-        
+        const stream = await this.genaiClient.models.generateContentStream(requestOptions);
+
         let chunkCount = 0;
-        for await (const chunk of result.stream) {
+        for await (const chunk of stream) {
+          if (abortController.signal.aborted) {
+            break;
+          }
           // Clear timeout on first chunk
           if (chunkCount === 0) {
             clearTimeout(timeoutId);
           }
           chunkCount++;
-          
+
           usageMetadata = !usageMetadata
             ? chunk?.usageMetadata
             : Object.assign(usageMetadata, chunk?.usageMetadata);
-          const chunkText = chunk.text();
+          const chunkText = chunk.text ?? '';
           await this.generateTextStream(chunkText, onProgress, {
             delay,
           });
@@ -959,21 +959,20 @@ class GoogleClient extends BaseClient {
     const safetySettings = getSafetySettings(model);
     if (!EXCLUDED_GENAI_MODELS.test(model) && !this.project_id) {
       logger.debug('Identified titling model as GenAI version');
-      /** @type {GenerativeModel} */
-      const client = this.client;
       const requestOptions = {
+        model: this.genaiModel,
         contents: _payload,
-        safetySettings,
-        generationConfig: {
+        config: {
           temperature: 0.5,
+          safetySettings,
           ...(model.toLowerCase().includes('flash')
             ? { thinkingConfig: { thinkingBudget: 0 } }
             : {}),
         },
       };
 
-      const result = await client.generateContent(requestOptions);
-      reply = result.response?.text();
+      const result = await this.genaiClient.models.generateContent(requestOptions);
+      reply = result.text ?? '';
       return reply;
     } else {
       const { instances } = _payload;

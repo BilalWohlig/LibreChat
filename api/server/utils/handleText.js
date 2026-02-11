@@ -30,11 +30,31 @@ const createOnProgress = (
 ) => {
   let i = 0;
   let tokens = addSpaceIfNeeded(generation);
+  let isBackground = false;
+  let bgSaveFn = null;
+  let bgResponseMessageId = null;
+  let lastSaveTime = Date.now();
+  const BG_SAVE_INTERVAL_MS = 2000;
 
   const basePayload = Object.assign({}, base, { text: tokens || '' });
 
   const progressCallback = (chunk, { res, ...rest }) => {
     basePayload.text = basePayload.text + chunk;
+
+    if (isBackground) {
+      const backgroundGeneration = require('~/server/services/BackgroundGeneration');
+      backgroundGeneration.update(bgResponseMessageId, basePayload.text);
+
+      const now = Date.now();
+      if (now - lastSaveTime >= BG_SAVE_INTERVAL_MS && bgSaveFn) {
+        lastSaveTime = now;
+        bgSaveFn(basePayload.text, bgResponseMessageId).catch((err) => {
+          const { logger: _logger } = require('~/config');
+          _logger.error('[createOnProgress] Background save error:', err);
+        });
+      }
+      return;
+    }
 
     const payload = Object.assign({}, basePayload, rest);
     sendMessage(res, payload);
@@ -48,6 +68,9 @@ const createOnProgress = (
   };
 
   const sendIntermediateMessage = (res, payload, extraTokens = '') => {
+    if (isBackground) {
+      return;
+    }
     basePayload.text = basePayload.text + extraTokens;
     const message = Object.assign({}, basePayload, payload);
     sendMessage(res, message);
@@ -65,7 +88,20 @@ const createOnProgress = (
     return basePayload.text;
   };
 
-  return { onProgress, getPartialText, sendIntermediateMessage };
+  /**
+   * Switch to background mode — stop writing to res, start saving to MongoDB periodically.
+   * @param {string} responseMessageId
+   * @param {(text: string, messageId: string) => Promise<void>} saveFn
+   */
+  const switchToBackgroundMode = (responseMessageId, saveFn) => {
+    isBackground = true;
+    bgResponseMessageId = responseMessageId;
+    bgSaveFn = saveFn;
+    const { logger: _logger } = require('~/config');
+    _logger.info(`[createOnProgress] Switched to background mode for ${responseMessageId}`);
+  };
+
+  return { onProgress, getPartialText, sendIntermediateMessage, switchToBackgroundMode };
 };
 
 const handleText = async (response) => {

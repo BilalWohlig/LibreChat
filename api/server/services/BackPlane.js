@@ -10,6 +10,12 @@ let subscriber;
  * whenever an activity event is received from another instance.
  */
 function initSubscriber(onMessage) {
+  // Skip Redis initialization if USE_REDIS is false
+  if (process.env.USE_REDIS === 'false') {
+    logger.info('[BackPlane] Redis disabled via USE_REDIS=false');
+    return;
+  }
+
   const redisUrl = process.env.REDIS_URI || 'redis://localhost:6379';
 
   if (!subscriber) {
@@ -44,6 +50,11 @@ function initSubscriber(onMessage) {
  * Publish an activity to Redis so all instances can see it.
  */
 async function publishActivity(activityData) {
+  // Skip Redis publishing if USE_REDIS is false
+  if (process.env.USE_REDIS === 'false') {
+    return;
+  }
+
   try {
     if (!publisher) {
       const redisUrl = process.env.REDIS_URI || 'redis://localhost:6379';

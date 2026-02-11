@@ -46,8 +46,8 @@ function cleanupAbortController(abortKey) {
     logger.debug(`Error cleaning up composed signals: ${e}`);
   }
 
-  // 2. Abort the controller if not already aborted
-  if (!abortController.signal.aborted) {
+  // 2. Abort the controller if not already aborted (skip if background generation is active)
+  if (!abortController.signal.aborted && !abortController.backgroundContinuation) {
     abortController.abort();
   }
 
@@ -92,6 +92,9 @@ async function abortMessage(req, res) {
   if (!abortController) {
     return res.status(204).send({ message: 'Request not found' });
   }
+
+  // Mark as explicit abort (user clicked Stop) to distinguish from passive disconnect
+  abortController.explicitAbort = true;
 
   const finalEvent = await abortController.abortCompletion?.();
   logger.debug(

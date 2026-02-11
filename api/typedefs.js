@@ -237,20 +237,8 @@
  */
 
 /**
- * @exports GenerativeModel
- * @typedef {import('@google/generative-ai').GenerativeModel} GenerativeModel
- * @memberof typedefs
- */
-
-/**
- * @exports GenerateContentRequest
- * @typedef {import('@google/generative-ai').GenerateContentRequest} GenerateContentRequest
- * @memberof typedefs
- */
-
-/**
- * @exports GenAIUsageMetadata
- * @typedef {import('@google/generative-ai').UsageMetadata} GenAIUsageMetadata
+ * @exports GoogleGenAI
+ * @typedef {import('@google/genai').GoogleGenAI} GoogleGenAI
  * @memberof typedefs
  */
 

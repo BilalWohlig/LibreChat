@@ -193,9 +193,9 @@ process.on('uncaughtException', (err) => {
     return;
   }
 
-  if (err.message.includes('GoogleGenerativeAI')) {
+  if (err.message.includes('GoogleGenAI') || err.message.includes('GoogleGenerativeAI')) {
     logger.warn(
-      '\n\n`GoogleGenerativeAI` errors cannot be caught due to an upstream issue, see: https://github.com/google-gemini/generative-ai-js/issues/303',
+      '\n\nGoogle GenAI SDK errors cannot be caught due to an upstream issue',
     );
     return;
   }

@@ -11,6 +11,7 @@ const {
   requestDataMap,
 } = require('~/server/cleanup');
 const { sendMessage, createOnProgress } = require('~/server/utils');
+const backgroundGeneration = require('~/server/services/BackgroundGeneration');
 const { saveMessage, getConvo } = require('~/models');
 const { logger } = require('~/config');
 const { UserActivityLog } = require('~/db/models');
@@ -74,10 +75,19 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
     userMessageId = reqDataContext.userMessageId;
   };
 
-  let { onProgress: progressCallback, getPartialText } = createOnProgress();
+  let { onProgress: progressCallback, getPartialText, switchToBackgroundMode } = createOnProgress();
+
+  let backgroundContinuation = false;
 
   const performCleanup = () => {
     logger.debug('[AskController] Performing cleanup');
+
+    // If background generation is active, skip abort controller and client disposal
+    if (backgroundContinuation) {
+      logger.info('[AskController] Skipping cleanup — background generation active');
+      return;
+    }
+
     if (Array.isArray(cleanupHandlers)) {
       for (const handler of cleanupHandlers) {
         try {
@@ -188,6 +198,45 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
       if (!abortController || abortController.signal.aborted || abortController.requestCompleted) {
         return;
       }
+
+      // If this is an explicit abort (user clicked Stop), abort normally
+      if (abortController.explicitAbort) {
+        abortController.abort();
+        logger.debug('[AskController] Request aborted on close (explicit stop)');
+        return;
+      }
+
+      // Passive disconnect (browser refresh/navigation) — continue generation in background
+      const bgResponseMessageId = reqDataContext?.responseMessageId;
+      if (bgResponseMessageId && typeof switchToBackgroundMode === 'function') {
+        logger.info('[AskController] Client disconnected, continuing generation in background');
+        backgroundContinuation = true;
+        abortController.backgroundContinuation = true;
+
+        backgroundGeneration.register(bgResponseMessageId, {
+          userId,
+          conversationId,
+          text: getPartialText(),
+        });
+
+        const bgSaveFn = async (text, messageId) => {
+          await saveMessage(req, {
+            messageId,
+            conversationId,
+            sender,
+            text,
+            unfinished: true,
+            error: false,
+            isCreatedByUser: false,
+            user: userId,
+          }, { context: 'AskController - background incremental save' });
+        };
+
+        switchToBackgroundMode(bgResponseMessageId, bgSaveFn);
+        return;
+      }
+
+      // Fallback: abort if we can't continue in background
       abortController.abort();
       logger.debug('[AskController] Request aborted on close');
     };
@@ -237,7 +286,30 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
       delete latestUserMessage.image_urls;
     }
 
-    if (!abortController.signal.aborted) {
+    if (backgroundContinuation) {
+      // Background mode: client already disconnected, save final response to MongoDB
+      logger.info('[AskController] Background generation completed, saving final response');
+      const bgResponseMessageId = reqDataContext?.responseMessageId;
+
+      await saveMessage(req, {
+        messageId: bgResponseMessageId,
+        conversationId,
+        sender,
+        text: response.text,
+        unfinished: false,
+        error: false,
+        isCreatedByUser: false,
+        user: userId,
+      }, { context: 'AskController - background final save' });
+
+      if (bgResponseMessageId) {
+        backgroundGeneration.complete(bgResponseMessageId);
+      }
+
+      // Now perform full cleanup since generation is done
+      backgroundContinuation = false;
+      performCleanup();
+    } else if (!abortController.signal.aborted) {
       const finalResponseMessage = { ...response };
 
       sendMessage(res, {
@@ -248,8 +320,6 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
         responseMessage: finalResponseMessage,
       });
       res.end();
-
-      
     }
 
     if (!client?.skipSaveUserMessage && latestUserMessage) {
