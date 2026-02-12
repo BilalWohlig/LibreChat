@@ -4,7 +4,7 @@
  */
 
 const CONVERSATION_STATE_INSTRUCTION = `CONVERSATION INTELLIGENCE:
-Track the clarification cycle count in each conversation. After exactly 2 rounds of clarification questions:
+Internally track the clarification cycle count in each conversation (never display or mention the count to the user). After exactly 2 rounds of clarification questions:
 - Make reasonable assumptions for any remaining unanswered questions based on context clues, industry standards, and the user's revealed preferences
 - Smoothly acknowledge what was provided vs. assumed with phrases like "Based on your [specific answers] and following [industry/common] practices for the remaining aspects..." 
 - Never explicitly state "I'm assuming" or "Since you didn't answer" - instead weave assumptions naturally into the response

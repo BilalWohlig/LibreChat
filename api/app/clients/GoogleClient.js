@@ -41,6 +41,40 @@ const endpointPrefix =
 const settings = endpointSettings[EModelEndpoint.google];
 const EXCLUDED_GENAI_MODELS = /gemini-(?:1\.0|1-0|pro)/;
 
+/* ── 429 Retry: Model downgrade & region alternation ── */
+const MODEL_DOWNGRADE_MAP = {
+  'gemini-3-pro-preview': 'gemini-3-flash-preview',
+  'gemini-3-flash-preview': 'gemini-2.5-pro',
+  'gemini-2.5-pro': 'gemini-2.5-flash',
+  'gemini-2.5-flash': 'gemini-2.5-flash-lite',
+  'gemini-2.5-flash-lite': 'gemini-2.0-flash',
+  'gemini-2.0-flash': 'gemini-2.0-flash-lite',
+  'gemini-2.0-flash-lite': 'gemini-2.0-flash', // special: NOT pro
+};
+
+const GEMINI_3_PATTERN = /^gemini-3/;
+
+function is429Error(error) {
+  if (!error) return false;
+  if (error.status === 429) return true;
+  const msg = (error.message || '').toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota')
+  );
+}
+
+function getDowngradedModel(model) {
+  return MODEL_DOWNGRADE_MAP[model] || null;
+}
+
+function getRegionForModel(model) {
+  if (GEMINI_3_PATTERN.test(model)) return 'global';
+  return loc;
+}
+
 class GoogleClient extends BaseClient {
   constructor(credentials, options = {}) {
     super('apiKey', options);
@@ -56,7 +90,7 @@ class GoogleClient extends BaseClient {
     this.serviceKey =
       serviceKey && typeof serviceKey === 'string' ? JSON.parse(serviceKey) : (serviceKey ?? {});
     /** @type {string | null | undefined} */
-    this.project_id = this.serviceKey.project_id;
+    this.project_id = this.serviceKey?.project_id || process.env.GOOGLE_PROJECT_ID;
     this.client_email = this.serviceKey.client_email;
     this.private_key = this.serviceKey.private_key;
     this.access_token = null;
@@ -465,7 +499,7 @@ class GoogleClient extends BaseClient {
       formattedMessages: _messages,
     });
 
-    if (!this.project_id && !EXCLUDED_GENAI_MODELS.test(this.modelOptions.model)) {
+    if (!EXCLUDED_GENAI_MODELS.test(this.modelOptions.model)) {
       const result = await this.buildGenerativeMessages(messages);
       result.tokenCountMap = tokenCountMap;
       result.promptTokens = promptTokens;
@@ -642,25 +676,50 @@ class GoogleClient extends BaseClient {
 
   createLLM(clientOptions) {
     const model = clientOptions.modelName ?? clientOptions.model;
-    clientOptions.location = loc;
-    clientOptions.endpoint = endpointPrefix;
+    // Gemini 3 only supports 'global' region; override for all other models use configured loc
+    const effectiveLocation = this._overrideLocation || getRegionForModel(model);
 
-    let requestOptions = null;
-    if (this.reverseProxyUrl) {
-      requestOptions = {
-        baseUrl: this.reverseProxyUrl,
+    // Modern models: use @google/genai SDK with VertexAI mode for regional endpoints
+    if (!EXCLUDED_GENAI_MODELS.test(model)) {
+      logger.debug('Creating GenAI client (VertexAI mode)', { model, location: effectiveLocation });
+      const genaiOptions = {
+        vertexai: true,
+        project: this.project_id,
+        location: effectiveLocation,
       };
 
-      if (this.authHeader) {
-        requestOptions.customHeaders = {
-          Authorization: `Bearer ${this.apiKey}`,
-        };
+      // Service account credentials for regional endpoints
+      if (this.serviceKey && this.serviceKey.private_key) {
+        genaiOptions.googleAuthOptions = { credentials: this.serviceKey };
+      } else if (this.apiKey) {
+        // Fallback: API key Express mode (global endpoint only)
+        genaiOptions.apiKey = this.apiKey;
       }
+
+      // Reverse proxy support
+      if (this.reverseProxyUrl) {
+        genaiOptions.httpOptions = { baseUrl: this.reverseProxyUrl };
+        if (this.authHeader) {
+          genaiOptions.httpOptions = {
+            ...(genaiOptions.httpOptions || {}),
+            headers: { Authorization: `Bearer ${this.apiKey}` },
+          };
+        }
+      }
+
+      this.genaiClient = new GoogleGenAI(genaiOptions);
+      this.genaiModel = model;
+      return this.genaiClient;
     }
 
+    // Legacy models: keep existing LangChain paths
     if (this.project_id != null) {
-      logger.debug('Creating VertexAI client');
+      logger.debug('Creating VertexAI client (legacy)', { model, location: effectiveLocation });
       this.visionMode = undefined;
+      clientOptions.location = effectiveLocation;
+      clientOptions.endpoint = effectiveLocation === 'global'
+        ? 'aiplatform.googleapis.com'
+        : `${effectiveLocation}-aiplatform.googleapis.com`;
       clientOptions.streaming = true;
       const client = new ChatVertexAI(clientOptions);
       client.temperature = clientOptions.temperature;
@@ -671,24 +730,9 @@ class GoogleClient extends BaseClient {
       client.presencePenalty = clientOptions.presencePenalty;
       client.maxOutputTokens = clientOptions.maxOutputTokens;
       return client;
-    } else if (!EXCLUDED_GENAI_MODELS.test(model)) {
-      logger.debug('Creating GenAI client');
-      const genaiOptions = { apiKey: this.apiKey };
-      if (requestOptions?.baseUrl) {
-        genaiOptions.httpOptions = { baseUrl: requestOptions.baseUrl };
-      }
-      if (requestOptions?.customHeaders) {
-        genaiOptions.httpOptions = {
-          ...(genaiOptions.httpOptions || {}),
-          headers: requestOptions.customHeaders,
-        };
-      }
-      this.genaiClient = new GoogleGenAI(genaiOptions);
-      this.genaiModel = model;
-      return this.genaiClient;
     }
 
-    logger.debug('Creating Chat Google Generative AI client');
+    logger.debug('Creating Chat Google Generative AI client (legacy)', { model });
     return new ChatGoogleGenerativeAI({ ...clientOptions, apiKey: this.apiKey });
   }
 
@@ -709,110 +753,121 @@ class GoogleClient extends BaseClient {
     return this.client;
   }
 
-  async getCompletion(_payload, options = {}) {
-    const { onProgress, abortController } = options;
-    const safetySettings = getSafetySettings(this.modelOptions.model);
-    const streamRate = this.options.streamRate ?? Constants.DEFAULT_STREAM_RATE;
-    const modelName = this.modelOptions.modelName ?? this.modelOptions.model ?? '';
+  /**
+   * Execute GenAI SDK streaming completion.
+   * Returns the reply text on success (may be partial if stream interrupted).
+   * Throws raw error if no text was generated.
+   */
+  async _executeGenAICompletion(_payload, { onProgress, abortController, streamRate, modelName }) {
+    const safetySettings = getSafetySettings(modelName);
+    const promptPrefix = (this.systemMessage ?? '').trim();
+    const genConfig = googleGenConfigSchema.parse(this.modelOptions);
 
+    const requestOptions = {
+      model: this.genaiModel,
+      contents: _payload,
+      config: {
+        ...genConfig,
+        safetySettings,
+        ...(promptPrefix.length ? { systemInstruction: promptPrefix } : {}),
+        ...(modelName.toLowerCase().includes('flash')
+          ? { thinkingConfig: { thinkingBudget: 0 } }
+          : {}),
+      },
+    };
+
+    const delay = modelName.includes('flash') ? 8 : 15;
+    let usageMetadata;
     let reply = '';
-    /** @type {Error} */
     let error;
+
     try {
-      if (!EXCLUDED_GENAI_MODELS.test(modelName) && !this.project_id) {
-        const promptPrefix = (this.systemMessage ?? '').trim();
-        const genConfig = googleGenConfigSchema.parse(this.modelOptions);
+      abortController.signal.addEventListener(
+        'abort',
+        () => {
+          logger.warn('[GoogleClient] Request was aborted', abortController.signal.reason);
+        },
+        { once: true },
+      );
 
-        const requestOptions = {
-          model: this.genaiModel,
-          contents: _payload,
-          config: {
-            ...genConfig,
-            safetySettings,
-            ...(promptPrefix.length ? { systemInstruction: promptPrefix } : {}),
-            ...(modelName.toLowerCase().includes('flash')
-              ? { thinkingConfig: { thinkingBudget: 0 } }
-              : {}),
-          },
+      const timeoutMs = this.options.timeoutMs || process.env.GOOGLE_REQUEST_TIMEOUT || 300000;
+      const timeoutId = setTimeout(() => {
+        if (!abortController.signal.aborted) {
+          logger.warn('[GoogleClient] Request timed out after', timeoutMs, 'ms');
+          abortController.abort('Request timeout');
+        }
+      }, timeoutMs);
+
+      const stream = await this.genaiClient.models.generateContentStream(requestOptions);
+
+      let chunkCount = 0;
+      for await (const chunk of stream) {
+        if (abortController.signal.aborted) {
+          break;
+        }
+        if (chunkCount === 0) {
+          clearTimeout(timeoutId);
+        }
+        chunkCount++;
+
+        usageMetadata = !usageMetadata
+          ? chunk?.usageMetadata
+          : Object.assign(usageMetadata, chunk?.usageMetadata);
+        const chunkText = chunk.text ?? '';
+        await this.generateTextStream(chunkText, onProgress, { delay });
+        reply += chunkText;
+        await sleep(streamRate);
+      }
+
+      clearTimeout(timeoutId);
+
+      if (usageMetadata) {
+        this.usage = {
+          input_tokens: usageMetadata.promptTokenCount,
+          output_tokens: usageMetadata.candidatesTokenCount,
         };
-
-        const delay = modelName.includes('flash') ? 8 : 15;
-        let usageMetadata;
-
-        abortController.signal.addEventListener(
-          'abort',
-          () => {
-            logger.warn('[GoogleClient] Request was aborted', abortController.signal.reason);
-          },
-          { once: true },
-        );
-
-        // Add timeout protection
-        const timeoutMs = this.options.timeoutMs || process.env.GOOGLE_REQUEST_TIMEOUT || 300000; // 5 minutes default
-        const timeoutId = setTimeout(() => {
-          if (!abortController.signal.aborted) {
-            logger.warn('[GoogleClient] Request timed out after', timeoutMs, 'ms');
-            abortController.abort('Request timeout');
-          }
-        }, timeoutMs);
-
-        const stream = await this.genaiClient.models.generateContentStream(requestOptions);
-
-        let chunkCount = 0;
-        for await (const chunk of stream) {
-          if (abortController.signal.aborted) {
-            break;
-          }
-          // Clear timeout on first chunk
-          if (chunkCount === 0) {
-            clearTimeout(timeoutId);
-          }
-          chunkCount++;
-
-          usageMetadata = !usageMetadata
-            ? chunk?.usageMetadata
-            : Object.assign(usageMetadata, chunk?.usageMetadata);
-          const chunkText = chunk.text ?? '';
-          await this.generateTextStream(chunkText, onProgress, {
-            delay,
-          });
-          reply += chunkText;
-          await sleep(streamRate);
-        }
-
-        clearTimeout(timeoutId);
-
-        if (usageMetadata) {
-          this.usage = {
-            input_tokens: usageMetadata.promptTokenCount,
-            output_tokens: usageMetadata.candidatesTokenCount,
-          };
-        }
-
-        return reply;
       }
+    } catch (e) {
+      error = e;
+      logger.error('[GoogleClient] GenAI completion error', e.message);
+    }
 
-      const { instances } = _payload;
-      const { messages: messages, context } = instances?.[0] ?? {};
+    if (error != null && reply === '') {
+      throw error;
+    }
+    return reply;
+  }
 
-      if (!this.isVisionModel && context && messages?.length > 0) {
-        messages.unshift(new SystemMessage(context));
-      }
+  /**
+   * Execute LangChain VertexAI streaming completion (legacy models).
+   * Returns the reply text on success (may be partial if stream interrupted).
+   * Throws raw error if no text was generated.
+   */
+  async _executeVertexAICompletion(_payload, { onProgress, abortController, streamRate, modelName }) {
+    const safetySettings = getSafetySettings(modelName);
+    const { instances } = _payload;
+    const { messages: messages, context } = instances?.[0] ?? {};
 
-      /** @type {import('@langchain/core/messages').AIMessageChunk['usage_metadata']} */
-      let usageMetadata;
+    if (!this.isVisionModel && context && messages?.length > 0) {
+      messages.unshift(new SystemMessage(context));
+    }
+
+    let usageMetadata;
+    let reply = '';
+    let error;
+
+    try {
       /** @type {ChatVertexAI} */
       const client = this.client;
-      
-      // Add timeout protection for VertexAI
-      const timeoutMs = this.options.timeoutMs || process.env.GOOGLE_REQUEST_TIMEOUT || 300000; // 5 minutes default
+
+      const timeoutMs = this.options.timeoutMs || process.env.GOOGLE_REQUEST_TIMEOUT || 300000;
       const timeoutId = setTimeout(() => {
         if (!abortController.signal.aborted) {
           logger.warn('[GoogleClient] VertexAI request timed out after', timeoutMs, 'ms');
           abortController.abort('Request timeout');
         }
       }, timeoutMs);
-      
+
       const stream = await client.stream(messages, {
         signal: abortController.signal,
         streamUsage: true,
@@ -820,7 +875,6 @@ class GoogleClient extends BaseClient {
       });
 
       let delay = this.options.streamRate || 8;
-
       if (!this.options.streamRate) {
         if (this.isGenerativeModel) {
           delay = 15;
@@ -832,12 +886,11 @@ class GoogleClient extends BaseClient {
 
       let chunkCount = 0;
       for await (const chunk of stream) {
-        // Clear timeout on first chunk
         if (chunkCount === 0) {
           clearTimeout(timeoutId);
         }
         chunkCount++;
-        
+
         if (chunk?.usage_metadata) {
           const metadata = chunk.usage_metadata;
           for (const key in metadata) {
@@ -845,14 +898,11 @@ class GoogleClient extends BaseClient {
               delete metadata[key];
             }
           }
-
           usageMetadata = !usageMetadata ? metadata : concat(usageMetadata, metadata);
         }
 
         const chunkText = chunk?.content ?? '';
-        await this.generateTextStream(chunkText, onProgress, {
-          delay,
-        });
+        await this.generateTextStream(chunkText, onProgress, { delay });
         reply += chunkText;
       }
 
@@ -863,25 +913,142 @@ class GoogleClient extends BaseClient {
       }
     } catch (e) {
       error = e;
-      logger.error('[GoogleClient] There was an issue generating the completion', e);
-      
-      // Better error handling for different types of errors
-      if (e.message && e.message.includes('aborted')) {
-        logger.warn('[GoogleClient] Request was aborted by user or timeout');
-      } else if (e.message && e.message.includes('timeout')) {
-        logger.warn('[GoogleClient] Request timed out');
-      } else if (e.message && e.message.includes('stream')) {
-        logger.warn('[GoogleClient] Stream error occurred, this may be due to network issues or long content');
-      }
+      logger.error('[GoogleClient] VertexAI completion error', e.message);
     }
 
     if (error != null && reply === '') {
-      const errorMessage = `{ "type": "${ErrorTypes.GoogleError}", "info": "${
-        error.message ?? 'The Google provider failed to generate content, please contact the Admin.'
-      }" }`;
-      throw new Error(errorMessage);
+      throw error;
     }
     return reply;
+  }
+
+  /**
+   * Determines model/region for a given retry attempt.
+   * @returns {{ model: string, region: string } | null} null if no more retries possible
+   */
+  /**
+   * Determines model/region for a given retry attempt.
+   * @returns {{ model: string, region: string } | null} null if no more retries possible
+   */
+  _getRetryConfig({ currentModel }) {
+    const downgraded = getDowngradedModel(currentModel);
+    if (!downgraded) return null;
+    return { model: downgraded, region: getRegionForModel(downgraded) };
+  }
+
+  /**
+   * Applies model and region overrides for retry, then recreates the LLM client.
+   */
+  _applyRetryOverrides(model, region) {
+    this.modelOptions.model = model;
+    if (this.modelOptions.modelName) {
+      this.modelOptions.modelName = model;
+    }
+    this._overrideLocation = region;
+    this.initializeClient();
+  }
+
+  /**
+   * Restores original model configuration after retry completes.
+   */
+  _restoreOriginalConfig(originalModel) {
+    this.modelOptions.model = originalModel;
+    if (this.modelOptions.modelName) {
+      this.modelOptions.modelName = originalModel;
+    }
+    this._overrideLocation = null;
+  }
+
+  async getCompletion(_payload, options = {}) {
+    const { onProgress, abortController } = options;
+    const streamRate = this.options.streamRate ?? Constants.DEFAULT_STREAM_RATE;
+    const originalModel = this.modelOptions.modelName ?? this.modelOptions.model ?? '';
+    const maxRetries = Object.keys(MODEL_DOWNGRADE_MAP).length;
+    const triedModels = new Set([originalModel]);
+    let currentModel = originalModel;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        if (abortController?.signal?.aborted) break;
+
+        const retryConfig = this._getRetryConfig({ currentModel });
+
+        if (!retryConfig || triedModels.has(retryConfig.model)) break;
+
+        currentModel = retryConfig.model;
+        triedModels.add(currentModel);
+
+        logger.warn(
+          `[GoogleClient] 429 retry attempt ${attempt}/${maxRetries}: ` +
+            `model=${retryConfig.model}, region=${retryConfig.region} ` +
+            `(original: model=${originalModel})`,
+        );
+
+        this._applyRetryOverrides(retryConfig.model, retryConfig.region);
+        await sleep(1000 * attempt);
+      }
+
+      try {
+        // DEBUG: Simulate 429 errors for testing retry logic
+        // Set DEBUG_SIMULATE_429=2 in .env to simulate 429 on first 2 attempts (0 and 1)
+        const simulate429Count = parseInt(process.env.DEBUG_SIMULATE_429 || '0', 10);
+        if (simulate429Count > 0 && attempt < simulate429Count) {
+          logger.warn(
+            `[GoogleClient] DEBUG: Simulating 429 on attempt ${attempt} (model=${currentModel}, region=${this._overrideLocation || loc})`,
+          );
+          const fakeError = new Error('DEBUG simulated 429 RESOURCE_EXHAUSTED');
+          fakeError.status = 429;
+          throw fakeError;
+        }
+
+        let reply;
+        if (this.genaiClient) {
+          reply = await this._executeGenAICompletion(_payload, {
+            onProgress,
+            abortController,
+            streamRate,
+            modelName: currentModel,
+          });
+        } else {
+          reply = await this._executeVertexAICompletion(_payload, {
+            onProgress,
+            abortController,
+            streamRate,
+            modelName: currentModel,
+          });
+        }
+
+        if (attempt > 0) {
+          logger.info(`[GoogleClient] Retry succeeded on attempt ${attempt} with model=${currentModel}`);
+          this._restoreOriginalConfig(originalModel);
+        }
+        return reply;
+      } catch (e) {
+        logger.error(`[GoogleClient] Completion attempt ${attempt} failed: ${e.message}`);
+
+        if (is429Error(e) && attempt < maxRetries) {
+          lastError = e;
+          continue;
+        }
+
+        if (attempt > 0) {
+          this._restoreOriginalConfig(originalModel);
+        }
+
+        const errorMessage = `{ "type": "${ErrorTypes.GoogleError}", "info": "${
+          e.message ?? 'The Google provider failed to generate content, please contact the Admin.'
+        }" }`;
+        throw new Error(errorMessage);
+      }
+    }
+
+    // All retries exhausted
+    this._restoreOriginalConfig(originalModel);
+    const errorMessage = `{ "type": "${ErrorTypes.GoogleError}", "info": "Rate limit exceeded after ${maxRetries} retries. Last error: ${
+      lastError?.message ?? 'Unknown'
+    }" }`;
+    throw new Error(errorMessage);
   }
 
   /**
@@ -957,7 +1124,7 @@ class GoogleClient extends BaseClient {
     const model =
       this.options.titleModel ?? this.modelOptions.modelName ?? this.modelOptions.model ?? '';
     const safetySettings = getSafetySettings(model);
-    if (!EXCLUDED_GENAI_MODELS.test(model) && !this.project_id) {
+    if (this.genaiClient) {
       logger.debug('Identified titling model as GenAI version');
       const requestOptions = {
         model: this.genaiModel,

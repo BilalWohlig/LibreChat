@@ -1,3 +1,4 @@
+const path = require('path');
 const { EModelEndpoint, AuthKeys } = require('librechat-data-provider');
 const { getUserKey, checkUserKeyExpiry } = require('~/server/services/UserService');
 const { getLLMConfig } = require('~/server/services/Endpoints/google/llm');
@@ -17,7 +18,7 @@ const initializeClient = async ({ req, res, endpointOption, overrideModel, optio
 
   let serviceKey = {};
   try {
-    serviceKey = require('~/data/auth.json');
+    serviceKey = require(path.join(process.cwd(), 'sa-key.json'));
   } catch (e) {
     // Do nothing
   }
