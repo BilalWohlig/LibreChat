@@ -126,7 +126,8 @@ function getLLMConfig(credentials, options = {}) {
       credentials: { ...serviceKey },
       projectId: project_id,
     };
-    llmConfig.location = process.env.GOOGLE_LOC || 'us-central1';
+    const defaultLoc = process.env.GOOGLE_LOC || 'us-central1';
+    llmConfig.location = /^gemini-3/.test(llmConfig.model) ? 'global' : defaultLoc;
   } else if (apiKey && provider === Providers.GOOGLE) {
     llmConfig.apiKey = apiKey;
   }
