@@ -17,10 +17,13 @@ const initializeClient = async ({ req, res, endpointOption, overrideModel, optio
   }
 
   let serviceKey = {};
-  try {
-    serviceKey = require(path.join(process.cwd(), 'sa-key.json'));
-  } catch (e) {
-    // Do nothing
+  const saKeyPath = process.env.GOOGLE_SA_KEY_PATH;
+  if (saKeyPath) {
+    try {
+      serviceKey = require(path.resolve(saKeyPath));
+    } catch (e) {
+      // Do nothing
+    }
   }
 
   const credentials = isUserProvided
