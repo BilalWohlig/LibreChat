@@ -20,9 +20,13 @@ const initializeClient = async ({ req, res, endpointOption, overrideModel, optio
   const saKeyPath = process.env.GOOGLE_SA_KEY_PATH;
   if (saKeyPath) {
     try {
-      serviceKey = require(path.resolve(saKeyPath));
+      const fs = require('fs');
+      const resolvedPath = path.resolve(saKeyPath);
+      const raw = fs.readFileSync(resolvedPath, 'utf8');
+      serviceKey = JSON.parse(raw);
+      console.log(`[Google Init] Loaded service account from ${resolvedPath} (project: ${serviceKey.project_id})`);
     } catch (e) {
-      // Do nothing
+      console.error(`[Google Init] Failed to load service account from ${saKeyPath}:`, e.message);
     }
   }
 
