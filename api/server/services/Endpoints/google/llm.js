@@ -126,6 +126,9 @@ function getLLMConfig(credentials, options = {}) {
       credentials: { ...serviceKey },
       projectId: project_id,
     };
+    // Prevent LangChain from falling back to GOOGLE_API_KEY env var;
+    // empty string is non-nullish (bypasses ?? fallback) but falsy (skips API key auth path)
+    llmConfig.apiKey = '';
     const defaultLoc = process.env.GOOGLE_LOC || 'us-central1';
     llmConfig.location = /^gemini-3/.test(llmConfig.model) ? 'global' : defaultLoc;
   } else if (apiKey && provider === Providers.GOOGLE) {

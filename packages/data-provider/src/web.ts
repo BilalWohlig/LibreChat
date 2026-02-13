@@ -54,6 +54,9 @@ export const webSearchAuth = {
       /** Optional (0) */
       firecrawlApiUrl: 0 as const,
     },
+    serper: {
+      serperApiKey: 1 as const,
+    },
   },
   rerankers: {
     jina: { jinaApiKey: 1 as const },
