@@ -92,7 +92,7 @@ const startServer = async () => {
       }),
     );
   } else {
-    console.warn('Response compression has been disabled via DISABLE_COMPRESSION.');
+    logger.warn('Response compression has been disabled via DISABLE_COMPRESSION.');
   }
 
   // Serve static assets with aggressive caching
@@ -101,7 +101,7 @@ const startServer = async () => {
   app.use(staticCache(app.locals.paths.assets));
 
   if (!ALLOW_SOCIAL_LOGIN) {
-    console.warn('Social logins are disabled. Set ALLOW_SOCIAL_LOGIN=true to enable them.');
+    logger.warn('Social logins are disabled. Set ALLOW_SOCIAL_LOGIN=true to enable them.');
   }
 
   /* OAUTH */

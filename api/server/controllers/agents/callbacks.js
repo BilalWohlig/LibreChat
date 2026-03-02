@@ -35,7 +35,7 @@ class ModelEndHandler {
    */
   handle(event, data, metadata, graph) {
     if (!graph || !metadata) {
-      console.warn(`Graph or metadata not found in ${event} event`);
+      logger.warn(`Graph or metadata not found in ${event} event`);
       return;
     }
 

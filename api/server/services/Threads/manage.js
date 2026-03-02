@@ -11,6 +11,7 @@ const { recordMessage, getMessages } = require('~/models/Message');
 const { countTokens, escapeRegExp } = require('~/server/utils');
 const { spendTokens } = require('~/models/spendTokens');
 const { saveConvo } = require('~/models/Conversation');
+const { logger } = require('~/config');
 
 /**
  * Initializes a new thread or adds messages to an existing thread.
@@ -561,7 +562,7 @@ async function processMessages({ openai, client, messages = [] }) {
               message.files.push(file);
             })
             .catch((error) => {
-              console.error(`Failed to retrieve file: ${error.message}`);
+              logger.error(`Failed to retrieve file: ${error.message}`);
             }),
         );
         continue;
@@ -629,7 +630,7 @@ async function processMessages({ openai, client, messages = [] }) {
             }
           }
         } catch (error) {
-          console.error(`Failed to process annotation: ${error.message}`);
+          logger.error(`Failed to process annotation: ${error.message}`);
         }
       });
 

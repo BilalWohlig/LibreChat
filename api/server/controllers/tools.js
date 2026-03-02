@@ -50,7 +50,7 @@ const verifyWebSearchAuth = async (req, res) => {
       authTypes: result.authTypes,
     });
   } catch (error) {
-    console.error('Error in verifyWebSearchAuth:', error);
+    logger.error('Error in verifyWebSearchAuth:', error);
     return res.status(500).json({ message: error.message });
   }
 };

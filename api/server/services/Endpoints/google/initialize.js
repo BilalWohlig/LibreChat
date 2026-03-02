@@ -4,6 +4,7 @@ const { getUserKey, checkUserKeyExpiry } = require('~/server/services/UserServic
 const { getLLMConfig } = require('~/server/services/Endpoints/google/llm');
 const { isEnabled } = require('~/server/utils');
 const { GoogleClient } = require('~/app');
+const { logger } = require('~/config');
 
 const initializeClient = async ({ req, res, endpointOption, overrideModel, optionsOnly }) => {
   const { GOOGLE_KEY, GOOGLE_REVERSE_PROXY, GOOGLE_AUTH_HEADER, PROXY } = process.env;
@@ -24,9 +25,9 @@ const initializeClient = async ({ req, res, endpointOption, overrideModel, optio
       const resolvedPath = path.resolve(saKeyPath);
       const raw = fs.readFileSync(resolvedPath, 'utf8');
       serviceKey = JSON.parse(raw);
-      console.log(`[Google Init] Loaded service account from ${resolvedPath} (project: ${serviceKey.project_id})`);
+      logger.info(`[Google Init] Loaded service account from ${resolvedPath} (project: ${serviceKey.project_id})`);
     } catch (e) {
-      console.error(`[Google Init] Failed to load service account from ${saKeyPath}:`, e.message);
+      logger.error(`[Google Init] Failed to load service account from ${saKeyPath}:`, e.message);
     }
   }
 

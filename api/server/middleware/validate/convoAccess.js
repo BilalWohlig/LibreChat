@@ -3,6 +3,7 @@ const { Constants, ViolationTypes, Time } = require('librechat-data-provider');
 const { searchConversation } = require('~/models/Conversation');
 const denyRequest = require('~/server/middleware/denyRequest');
 const { logViolation, getLogStores } = require('~/cache');
+const { logger } = require('~/config');
 
 const { USE_REDIS, CONVO_ACCESS_VIOLATION_SCORE: score = 0 } = process.env ?? {};
 
@@ -65,7 +66,7 @@ const validateConvoAccess = async (req, res, next) => {
     }
     next();
   } catch (error) {
-    console.error('Error validating conversation access:', error);
+    logger.error('Error validating conversation access:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
