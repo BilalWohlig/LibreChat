@@ -679,20 +679,20 @@ class GoogleClient extends BaseClient {
     // Gemini 3 only supports 'global' region; override for all other models use configured loc
     const effectiveLocation = this._overrideLocation || getRegionForModel(model);
 
-    // Modern models: use @google/genai SDK with VertexAI mode for regional endpoints
+    // Modern models: use @google/genai SDK
     if (!EXCLUDED_GENAI_MODELS.test(model)) {
-      logger.debug('Creating GenAI client (VertexAI mode)', { model, location: effectiveLocation });
-      const genaiOptions = {
-        vertexai: true,
-        project: this.project_id,
-        location: effectiveLocation,
-      };
+      const useVertexAI = !!(this.project_id && this.serviceKey && this.serviceKey.private_key);
+      logger.debug(`Creating GenAI client (${useVertexAI ? 'VertexAI' : 'API key'} mode)`, { model, location: effectiveLocation });
+      const genaiOptions = {};
 
-      // Service account credentials for regional endpoints
-      if (this.serviceKey && this.serviceKey.private_key) {
+      if (useVertexAI) {
+        // VertexAI mode: project/location with service account credentials
+        genaiOptions.vertexai = true;
+        genaiOptions.project = this.project_id;
+        genaiOptions.location = effectiveLocation;
         genaiOptions.googleAuthOptions = { credentials: this.serviceKey };
       } else if (this.apiKey) {
-        // Fallback: API key Express mode (global endpoint only)
+        // API key mode (Google AI Studio)
         genaiOptions.apiKey = this.apiKey;
       }
 

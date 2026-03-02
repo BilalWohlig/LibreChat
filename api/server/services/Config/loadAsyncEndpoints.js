@@ -19,6 +19,18 @@ async function loadAsyncEndpoints(req) {
     }
   }
 
+  if (!serviceKey && process.env.GOOGLE_SA_KEY_PATH) {
+    try {
+      serviceKey = require('fs').readFileSync(
+        require('path').resolve(process.env.GOOGLE_SA_KEY_PATH),
+        'utf8',
+      );
+      serviceKey = JSON.parse(serviceKey);
+    } catch (e) {
+      // ignore
+    }
+  }
+
   if (isUserProvided(googleKey)) {
     googleUserProvides = true;
     if (i <= 1) {
