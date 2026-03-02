@@ -105,7 +105,7 @@ const chatV1 = async (req, res) => {
       parentMessageId,
       sender: 'System',
       user: req.user.id,
-      shouldSaveMessage: false,
+      shouldSaveMessage: true,
       messageId: responseMessageId,
       endpoint,
     };

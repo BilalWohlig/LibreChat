@@ -61,7 +61,7 @@ const createErrorHandler = ({ req, res, getContext, originPath = '/assistants/ch
       parentMessageId,
       sender: 'System',
       user: req.user.id,
-      shouldSaveMessage: false,
+      shouldSaveMessage: true,
       messageId: responseMessageId,
       endpoint,
     };

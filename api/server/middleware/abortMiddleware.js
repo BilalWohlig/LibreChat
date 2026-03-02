@@ -1,4 +1,5 @@
 // abortMiddleware.js
+const { v4 } = require('uuid');
 const { isAssistantsEndpoint, ErrorTypes } = require('librechat-data-provider');
 const { sendMessage, sendError, countTokens, isEnabled } = require('~/server/utils');
 const { truncateText, smartTruncateText } = require('~/app/clients/prompts');
@@ -314,7 +315,8 @@ const handleAbortError = async (res, req, error, data) => {
   } else {
     logger.error('[handleAbortError] AI response error; aborting request:', error);
   }
-  const { sender, conversationId, messageId, parentMessageId, userMessageId, partialText } = data;
+  const { sender, conversationId: _conversationId, messageId, parentMessageId, userMessageId, partialText } = data;
+  const conversationId = _conversationId || v4();
 
   if (error.stack && error.stack.includes('google')) {
     logger.warn(
@@ -334,6 +336,28 @@ const handleAbortError = async (res, req, error, data) => {
     errorText = `{"type":"${ErrorTypes.NO_SYSTEM_MESSAGES}"}`;
   }
 
+  // Save the user's message if it wasn't saved yet (error occurred before message creation)
+  if (!userMessageId && req.body?.text && conversationId) {
+    try {
+      const userMsgId = v4();
+      await saveMessage(
+        req,
+        {
+          messageId: userMsgId,
+          conversationId,
+          parentMessageId: parentMessageId || '00000000-0000-0000-0000-000000000000',
+          text: req.body.text,
+          user: req.user.id,
+          isCreatedByUser: true,
+          error: false,
+        },
+        { context: 'handleAbortError - saving unsaved user message' },
+      );
+    } catch (e) {
+      logger.error('[handleAbortError] Failed to save user message:', e);
+    }
+  }
+
   /**
    * @param {string} partialText
    * @returns {Promise<void>}
@@ -350,7 +374,7 @@ const handleAbortError = async (res, req, error, data) => {
       spec: endpointOption?.spec,
       iconURL: endpointOption?.iconURL,
       modelLabel: endpointOption?.modelLabel,
-      shouldSaveMessage: userMessageId != null,
+      shouldSaveMessage: true,
       model: endpointOption?.modelOptions?.model || req.body?.model,
     };
 
